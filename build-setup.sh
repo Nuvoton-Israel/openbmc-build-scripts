@@ -102,6 +102,16 @@ xtrct_copy_timeout="300"
 
 bitbake_target="obmc-phosphor-image"
 PROXY=""
+# compatibility for build SPI and eMMC images
+export img_type=${img_type:-static.mtd}
+# use the target without tarball
+export bb_target=${bitbake_target}
+# branch option
+npcm_branch=${npcm_branch:-npcm-master}
+# all test images folder
+export images_path=${images_path:-${WORKSPACE}/images}
+# how many test image we need
+export rebuild_times=${rebuild_times:-2}
 
 MIRROR=""
 if [[ -n "${UBUNTU_MIRROR}" ]]; then
@@ -134,10 +144,13 @@ esac
 # Timestamp for job
 echo "Build started, $(date)"
 
+# force get newest code
+rm -rf ${obmc_dir}
+
 # If the obmc_dir directory doesn't exist clone it in
 if [ ! -d "${obmc_dir}" ]; then
   echo "Clone in openbmc master to ${obmc_dir}"
-  git clone https://github.com/openbmc/openbmc "${obmc_dir}"
+  git clone -b ${npcm_branch} --single-branch https://github.com/Nuvoton-Israel/openbmc "${obmc_dir}"
 fi
 
 if [[ "$target" = repotest ]]; then
@@ -381,6 +394,11 @@ if [[ ${xtrct_small_copy_dir} ]]; then
 else
   timeout ${xtrct_copy_timeout} cp -r ${build_dir}/* ${xtrct_path}
 fi
+
+# NPCM hooks
+source ${build_scripts_dir}/rebuild.sh \
+  ${build_dir}/${xtrct_small_copy_dir}/${MACHINE}/${bb_target}-${MACHINE}.${img_type}.tar \
+  ${images_path}  ${img_type}  ${obmc_dir}  ${rebuild_times}
 
 if [[ 0 -ne $? ]]; then
   echo "Received a non-zero exit code from timeout"
