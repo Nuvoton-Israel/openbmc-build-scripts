@@ -5,26 +5,21 @@
 # Usage: update_image.sh
 #
 
-# We now only perform test on Olympus
-if [ "${target}" != "olympus-nuvoton" ];then
-  return 0
-fi
-
-# copy test images to remote PC
 images_path=${images_path:-${WORKSPACE}/images}
 rebuild_times=${rebuild_times:-2}
 
+# copy test images to remote PC
 cd ${images_path}
-test_images=""
+test_images="obmc-phosphor-image-${target}.${img_type}.tar"
 for i in $(seq 1 "${rebuild_times}");
 do
   test_images="${test_images} test_${i}.${img_type}.tar"
 done
 sshpass -e sftp -oBatchMode=no -b - ${SSHUSER}@${SSHHOST} << !
-   put ${test_images} /tftpboot
-   put bmc_nokernel_image.${img_type}.tar /tftpboot
-   put bmc_bad_unsig.${img_type}.tar /tftpboot
-   put bmc_bad_manifest.${img_type}.tar /tftpboot
+   put ${test_images} /tftpboot/${target}/
+   put bmc_nokernel_image.${img_type}.tar /tftpboot/${target}/
+   put bmc_bad_unsig.${img_type}.tar /tftpboot/${target}/
+   put bmc_bad_manifest.${img_type}.tar /tftpboot/${target}/
    bye
 !
 
