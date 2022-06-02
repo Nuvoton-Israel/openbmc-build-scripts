@@ -4,6 +4,7 @@
 #
 # Usage: update_image.sh
 #
+set -xeo pipefail
 
 images_path=${images_path:-${WORKSPACE}/images}
 rebuild_times=${rebuild_times:-2}
