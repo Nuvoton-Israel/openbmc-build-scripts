@@ -30,8 +30,7 @@ upload_wait=60
 reboot_wait=600
 reset_wait=300
 # mmc need time write data after upload, and reboot time is faster
-res=`echo ${img_type} |grep -o mmc`
-if [ -n "${res}" ]; then
+if [[ ${img_type} == *mmc ]]; then
   echo "use mmc wait"
   upload_wait=120
   reboot_wait=150
