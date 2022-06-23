@@ -144,13 +144,21 @@ esac
 # Timestamp for job
 echo "Build started, $(date)"
 
-# force get newest code
+# Force get newest code
 rm -rf ${obmc_dir}
 
 # If the obmc_dir directory doesn't exist clone it in
 if [ ! -d "${obmc_dir}" ]; then
   echo "Clone in openbmc master to ${obmc_dir}"
   git clone -b ${npcm_branch} --single-branch https://github.com/Nuvoton-Israel/openbmc "${obmc_dir}"
+fi
+
+# Set formal build release tag
+if [ -n "${RELEASE_TAG}" ];then
+  echo "set release tag: ${RELEASE_TAG}"
+  cd ${obmc_dir}
+  git tag -m "Add release tag ${RELEASE_TAG}" ${RELEASE_TAG} HEAD
+  cd -
 fi
 
 if [[ "$target" = repotest ]]; then
