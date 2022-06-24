@@ -153,8 +153,15 @@ if [ ! -d "${obmc_dir}" ]; then
   git clone -b ${npcm_branch} --single-branch https://github.com/Nuvoton-Israel/openbmc "${obmc_dir}"
 fi
 
+# Specify commit ID build
+if [ -n "${COMMIT_ID}" ]; then
+  echo "set version to: ${COMMIT_ID}"
+  cd ${obmc_dir}
+  git reset --hard ${COMMIT_ID}
+  cd -
+fi
 # Set formal build release tag
-if [ -n "${RELEASE_TAG}" ];then
+if [ -n "${RELEASE_TAG}" ]; then
   echo "set release tag: ${RELEASE_TAG}"
   cd ${obmc_dir}
   git tag -m "Add release tag ${RELEASE_TAG}" ${RELEASE_TAG} HEAD

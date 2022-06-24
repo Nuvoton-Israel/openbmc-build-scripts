@@ -27,7 +27,7 @@ sshpass -e sftp -oBatchMode=no -b - ${SSHUSER}@${SSHHOST} << !
 # set up wait time for spi or mmc image
 # set default value for SPI
 upload_wait=60
-reboot_wait=600
+reboot_wait=900  # 64MB SPI image need more time to erase/flash
 reset_wait=300
 # mmc need time write data after upload, and reboot time is faster
 if [[ ${img_type} == *mmc ]]; then
@@ -49,6 +49,7 @@ sleep ${upload_wait}
 
 curl -k -H "X-Auth-Token: $token" -X POST https://${BMC_IP}/redfish/v1/Managers/bmc/Actions/Manager.Reset -d '{"ResetType": "GracefulRestart"}'
 
+# TODO: we should ping DUT until alive, not just wait
 echo -e "\nsleep ${reboot_wait}"
 sleep ${reboot_wait}
 
