@@ -162,9 +162,10 @@ if [ -n "${COMMIT_ID}" ]; then
 fi
 # Set formal build release tag
 if [ -n "${RELEASE_TAG}" ]; then
-  echo "set release tag: ${RELEASE_TAG}"
   cd ${obmc_dir}
-  git tag -m "Add release tag ${RELEASE_TAG}" ${RELEASE_TAG} HEAD
+  commit=`echo $(git show --oneline -s) | cut -b -10`
+  echo "set release tag: ${RELEASE_TAG}-${commit}"
+  git tag -m "Add release tag ${RELEASE_TAG}" ${RELEASE_TAG}-${commit} HEAD
   cd -
 fi
 
