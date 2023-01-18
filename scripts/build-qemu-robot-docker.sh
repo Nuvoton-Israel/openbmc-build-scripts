@@ -19,7 +19,7 @@ set -uo pipefail
 http_proxy=${http_proxy:-}
 
 DOCKER_IMG_NAME=${1:-"openbmc/ubuntu-robot-qemu"}
-DISTRO=${2:-"ubuntu:focal"}
+DISTRO=${2:-"ubuntu:jammy"}
 UBUNTU_MIRROR=${UBUNTU_MIRROR:-""}
 PIP_MIRROR=${PIP_MIRROR:-""}
 
@@ -62,8 +62,8 @@ RUN apt-get update && apt-get install -yy \
     debianutils \
     gawk \
     git \
-    python \
-    python-dev \
+    python2 \
+    python2-dev \
     python-setuptools \
     python3 \
     python3-dev \
@@ -92,6 +92,7 @@ RUN apt-get update && apt-get install -yy \
     libasound2 \
     libfdt1 \
     libpcre3 \
+    libslirp-dev \
     openssl \
     libxml2-dev \
     libxslt-dev \
@@ -119,11 +120,12 @@ RUN pip3 install \
     websocket-client \
     json2yaml \
     robotframework \
-    robotframework-requests==0.7.0 \
+    robotframework-requests \
+    robotframework-jsonlibrary \
     robotframework-sshlibrary \
     robotframework-scplibrary \
     pysnmp \
-    redfish \
+    redfish>=3.1.7 \
     beautifulsoup4 --upgrade \
     lxml \
     jsonschema \
@@ -156,7 +158,7 @@ EOF
 
 PROXY_ARGS=""
 if [[ -n "${http_proxy}" ]]; then
-  PROXY_ARGS="--build-arg http_proxy=${http_proxy} --build-arg https_proxy=${http_proxy}"
+    PROXY_ARGS="--build-arg http_proxy=${http_proxy} --build-arg https_proxy=${http_proxy}"
 fi
 
 # Build above image
