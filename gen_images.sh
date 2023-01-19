@@ -59,7 +59,7 @@ if [ "$?" != "0" ];then
 fi
 # private key
 if [ ! -f "${ROOT_DIR}/${PRIVATE_KEY}" ];then
-    echo "Cannot find private key: ${PRIVATE_KEY}"
+    echo "Cannot find private key: ${ROOT_DIR}/${PRIVATE_KEY}"
     exit 1
 fi
 if [ ! -f "$1" ];then
