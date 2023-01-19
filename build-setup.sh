@@ -91,6 +91,7 @@ distro=${distro:-ubuntu}
 img_tag=${img_tag:-latest}
 target=${target:-qemuarm}
 no_tar=${no_tar:-false}
+no_rebuild=${no_rebuild:-yes}
 nice_priority=${nice_priority:-}
 
 # Deployment variables
@@ -413,9 +414,11 @@ else
 fi
 
 # NPCM hooks
-source ${build_scripts_dir}/rebuild.sh \
-  ${build_dir}/${xtrct_small_copy_dir}/${MACHINE}/${bb_target}-${MACHINE}.${img_type}.tar \
-  ${images_path}  ${img_type}  ${obmc_dir}  ${rebuild_times}
+if [ "$no_rebuild" = "false" ]; then
+  source ${build_scripts_dir}/rebuild.sh \
+    ${build_dir}/${xtrct_small_copy_dir}/${MACHINE}/${bb_target}-${MACHINE}.${img_type}.tar \
+    ${images_path}  ${img_type}  ${obmc_dir}  ${rebuild_times}
+fi
 
 if [[ 0 -ne $? ]]; then
   echo "Received a non-zero exit code from timeout"
