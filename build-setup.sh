@@ -299,6 +299,9 @@ export https_proxy=${http_proxy}
 
 mkdir -p ${WORKSPACE}/bin
 
+# clean up conf to make sure default conf take effect
+rm -rvf ${build_dir}/conf/*
+
 # Configure proxies for BitBake
 if [[ -n "${http_proxy}" ]]; then
 
