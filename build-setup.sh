@@ -113,6 +113,8 @@ npcm_branch=${npcm_branch:-npcm-master}
 export images_path=${images_path:-${WORKSPACE}/images}
 # how many test image we need
 export rebuild_times=${rebuild_times:-2}
+# maybe we can build other openbmc repo like upstream
+export openbmc_repo=${openbmc_repo:-https://github.com/Nuvoton-Israel/openbmc}
 
 MIRROR=""
 if [[ -n "${UBUNTU_MIRROR}" ]]; then
@@ -145,13 +147,10 @@ esac
 # Timestamp for job
 echo "Build started, $(date)"
 
-# Force get newest code
-rm -rf ${obmc_dir}
-
 # If the obmc_dir directory doesn't exist clone it in
 if [ ! -d "${obmc_dir}" ]; then
   echo "Clone in openbmc master to ${obmc_dir}"
-  git clone -b ${npcm_branch} --single-branch https://github.com/Nuvoton-Israel/openbmc "${obmc_dir}"
+  git clone -b ${npcm_branch} --single-branch ${openbmc_repo} "${obmc_dir}"
 fi
 
 # Specify commit ID build
