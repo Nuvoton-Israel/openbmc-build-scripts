@@ -217,6 +217,7 @@ if [[ "${distro}" == fedora ]];then
       gcc \
       gcc-c++ \
       git \
+      lz4 \
       make \
       patch \
       perl-bignum \
@@ -234,7 +235,8 @@ if [[ "${distro}" == fedora ]];then
       hostname \
       rpcgen \
       glibc-langpack-en \
-      glibc-locale-source
+      glibc-locale-source \
+      zstd
 
   # Set the locale
   ENV LANG=en_US.utf8
@@ -245,7 +247,6 @@ if [[ "${distro}" == fedora ]];then
 
   USER ${USER}
   ENV HOME ${HOME}
-  RUN /bin/bash
 EOF
     )
 
@@ -297,7 +298,6 @@ elif [[ "${distro}" == ubuntu ]]; then
 
   USER ${USER}
   ENV HOME ${HOME}
-  RUN /bin/bash
 EOF
     )
 fi
@@ -435,8 +435,12 @@ chmod a+x "${WORKSPACE}/build.sh"
 # Give the Docker image a name based on the distro,tag,arch,and target
 img_name=${img_name:-openbmc/${distro}:${img_tag}-${target}-${ARCH}}
 
+# Ensure appropriate docker build output to see progress and identify
+# any issues
+export BUILDKIT_PROGRESS=plain
+
 # Build the Docker image
-docker build -t "${img_name}" - <<< "${Dockerfile}"
+docker build --network=host -t "${img_name}" - <<< "${Dockerfile}"
 
 # If obmc_dir or ssc_dir are ${HOME} or a subdirectory they will not be mounted
 mount_obmc_dir="-v ""${obmc_dir}"":""${obmc_dir}"" "
@@ -451,6 +455,10 @@ fi
 if [[ "${WORKSPACE}" = "${HOME}/"* || "${WORKSPACE}" = "${HOME}" ]];then
     mount_workspace_dir=""
 fi
+
+# If we are building on a podman based machine, need to have this set in
+# the env to allow the home mount to work (no impact on non-podman systems)
+export PODMAN_USERNS="keep-id"
 
 # Run the Docker container, execute the build.sh script
 # shellcheck disable=SC2086 # mount commands word-split purposefully

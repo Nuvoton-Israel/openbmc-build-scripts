@@ -63,16 +63,20 @@ fi
 
 # Write full list of users to a file
 GERRIT_CI_GROUPS=( \
+        akamai/ci-authorized \
         alibaba/ci-authorized \
         amd/ci-authorized \
         ami/ci-authorized \
         ampere/ci-authorized \
         arm/ci-authorized \
         aspeed/ci-authorized \
+        asus/ci-authorized \
         bytedance/ci-authorized \
+        celestica/ci-authorized \
         code-construct/ci-authorized \
         depo/ci-authorized \
         erg/ci-authorized \
+        equinix/ci-authorized \
         facebook/ci-authorized \
         fii/ci-authorized \
         gager-in/ci-authorized \
@@ -80,6 +84,7 @@ GERRIT_CI_GROUPS=( \
         hcl/ci-authorized \
         hpe/ci-authorized \
         ibm/ci-authorized \
+        iei/ci-authorized \
         individual/ci-authorized \
         inspur/ci-authorized \
         intel/ci-authorized \
@@ -96,6 +101,9 @@ GERRIT_CI_GROUPS=( \
         quic/ci-authorized \
         rcs/ci-authorized \
         supermicro/ci-authorized \
+        tencent/ci-authorized \
+        ufispace/ci-authorized \
+        vaisala/ci-authorized \
         wistron/ci-authorized \
         wiwynn/ci-authorized \
         yadro/ci-authorized \

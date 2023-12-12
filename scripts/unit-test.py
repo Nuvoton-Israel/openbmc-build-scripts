@@ -224,7 +224,7 @@ class DepTree:
             child.PrintTree(level + 1)
 
 
-def check_call_cmd(*cmd):
+def check_call_cmd(*cmd, **kwargs):
     """
     Verbose prints the directory location the given command is called from and
     the command, then executes the command using check_call.
@@ -234,7 +234,7 @@ def check_call_cmd(*cmd):
     cmd                 List of parameters constructing the complete command
     """
     printline(os.getcwd(), ">", " ".join(cmd))
-    check_call(cmd)
+    check_call(cmd, **kwargs)
 
 
 def clone_pkg(pkg, branch):
@@ -383,6 +383,7 @@ def run_cppcheck():
                 "-j",
                 str(multiprocessing.cpu_count()),
                 "--enable=style,performance,portability,missingInclude",
+                "--inline-suppr",
                 "--suppress=useStlAlgorithm",
                 "--suppress=unusedStructMember",
                 "--suppress=postfixOperator",
@@ -897,7 +898,9 @@ class Meson(BuildSystem):
     def configure(self, build_for_testing):
         self.build_for_testing = build_for_testing
         meson_options = {}
-        if os.path.exists("meson_options.txt"):
+        if os.path.exists("meson.options"):
+            meson_options = self._parse_options("meson.options")
+        elif os.path.exists("meson_options.txt"):
             meson_options = self._parse_options("meson_options.txt")
         meson_flags = [
             "-Db_colorout=never",
@@ -905,7 +908,10 @@ class Meson(BuildSystem):
             "-Dwarning_level=3",
         ]
         if build_for_testing:
-            meson_flags.append("--buildtype=debug")
+            # -Ddebug=true -Doptimization=g is helpful for abi-dumper but isn't a combination that
+            # is supported by meson's build types. Configure it manually.
+            meson_flags.append("-Ddebug=true")
+            meson_flags.append("-Doptimization=g")
         else:
             meson_flags.append("--buildtype=debugoptimized")
         if OptionKey("tests") in meson_options:
@@ -1033,9 +1039,7 @@ class Meson(BuildSystem):
                 if not os.path.isfile(".openbmc-no-clang"):
                     check_call_cmd("meson", "compile", "-C", build_dir)
                 try:
-                    check_call_cmd(
-                        "run-clang-tidy", "-fix", "-format", "-p", build_dir
-                    )
+                    check_call_cmd("ninja", "-C", build_dir, "clang-tidy")
                 except subprocess.CalledProcessError:
                     check_call_cmd(
                         "git", "-C", CODE_SCAN_DIR, "--no-pager", "diff"
@@ -1066,6 +1070,7 @@ class Meson(BuildSystem):
                 "--print-errorlogs",
                 "--logbase",
                 "testlog-ubasan",
+                env=os.environ | {"UBSAN_OPTIONS": "halt_on_error=1"},
             )
             # TODO: Fix memory sanitizer
             # check_call_cmd('meson', 'configure', 'build',
@@ -1109,6 +1114,28 @@ class Meson(BuildSystem):
                 raise Exception(
                     "C++20 support requires specifying in meson.build: "
                     + "meson_version: '>=0.57'"
+                )
+
+        # C++23 requires at least Meson 1.1.1 but Meson itself doesn't
+        # identify this.  Add to our unit-test checks so that we don't
+        # get a meson.build missing this.
+        pattern = r"'cpp_std=c\+\+23'"
+        for match in re.finditer(pattern, build_contents):
+            if not meson_version or not meson_version_compare(
+                meson_version, ">=1.1.1"
+            ):
+                raise Exception(
+                    "C++23 support requires specifying in meson.build: "
+                    + "meson_version: '>=1.1.1'"
+                )
+
+        if "get_variable(" in build_contents:
+            if not meson_version or not meson_version_compare(
+                meson_version, ">=0.58"
+            ):
+                raise Exception(
+                    "dep.get_variable() with positional argument requires "
+                    + "meson_Version: '>=0.58'"
                 )
 
 

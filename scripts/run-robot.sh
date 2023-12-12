@@ -22,10 +22,12 @@ MACHINE=${MACHINE:-"qemu"}
 ROBOT_CODE_HOME=${ROBOT_CODE_HOME:-/tmp/$(whoami)/${RANDOM}/obmc-robot/}
 ROBOT_TEST_CMD="${ROBOT_TEST_CMD:-"python3 -m robot\
     -v OPENBMC_HOST:${IP_ADDR}\
+    -v OPENBMC_PASSWORD:0penBmc\
+    -v IPMI_PASSWORD:0penBmc\
     -v SSH_PORT:${SSH_PORT}\
     -v HTTPS_PORT:${HTTPS_PORT}\
     -v REDFISH_SUPPORT_TRANS_STATE:1\
-    --argumentfile ./test_lists/QEMU_CI ./tests ./redfish ./ipmi"}"
+    --argumentfile ./test_lists/QEMU_CI ./redfish ./ipmi"}"
 
 git clone https://github.com/openbmc/openbmc-test-automation.git \
     "${ROBOT_CODE_HOME}"
