@@ -150,22 +150,27 @@ echo "Build started, $(date)"
 # If the obmc_dir directory doesn't exist clone it in
 if [ ! -d "${obmc_dir}" ]; then
   echo "Clone in openbmc master to ${obmc_dir}"
-  git clone -b ${npcm_branch} --single-branch ${openbmc_repo} "${obmc_dir}"
+  git clone -b "${npcm_branch}" --single-branch "${openbmc_repo}" "${obmc_dir}"
+fi
+
+# we are not clean build, clean up images which build at last time
+if [ -d "${xtrct_path}" ]; then
+  rm -r "${xtrct_path}"
 fi
 
 # Specify commit ID build
 if [ -n "${COMMIT_ID}" ]; then
   echo "set version to: ${COMMIT_ID}"
-  cd ${obmc_dir}
-  git reset --hard ${COMMIT_ID}
+  cd "${obmc_dir}"
+  git reset --hard "${COMMIT_ID}"
   cd -
 fi
 # Set formal build release tag
 if [ -n "${RELEASE_TAG}" ]; then
-  cd ${obmc_dir}
-  commit=`echo $(git show --oneline -s) | cut -b -10`
+  cd "${obmc_dir}"
+  commit=$(git show --oneline -s | cut -b -10)
   echo "set release tag: ${RELEASE_TAG}-${commit}"
-  git tag -m "Add release tag ${RELEASE_TAG}" ${RELEASE_TAG}-${commit} HEAD
+  git tag -m "Add release tag ${RELEASE_TAG}" "${RELEASE_TAG}-${commit}" HEAD
   cd -
 fi
 
