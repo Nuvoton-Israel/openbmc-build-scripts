@@ -173,6 +173,16 @@ if [ -n "${RELEASE_TAG}" ]; then
   git tag -m "Add release tag ${RELEASE_TAG}" "${RELEASE_TAG}-${commit}" HEAD
   cd -
 fi
+# Apply specific path
+if [ -n "${DBG_PATCH}" ]; then
+  cd "${obmc_dir}"
+  # clean up codebase first, (build will be ignored by git)
+  git add .
+  git reset --hard HEAD
+  # apply test patch
+  git apply "/var/jenkins_home/patches/${DBG_PATCH}"
+  cd -
+fi
 
 if [[ "$target" = repotest ]]; then
     DOCKER_IMAGE_NAME=$(./scripts/build-unit-test-docker)
