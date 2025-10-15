@@ -124,6 +124,8 @@ export images_path=${images_path:-${WORKSPACE}/images}
 export rebuild_times=${rebuild_times:-2}
 # maybe we can build other openbmc repo like upstream
 export openbmc_repo=${openbmc_repo:-https://github.com/Nuvoton-Israel/openbmc}
+# DOOD should mount host home to container home, not jenkins home
+HOME_MOUNT="${HOME_MOUNT:-$HOME}"
 
 MIRROR=""
 if [[ -n "${UBUNTU_MIRROR}" ]]; then
@@ -482,7 +484,7 @@ docker run \
     --rm=true \
     -e WORKSPACE="${WORKSPACE}" \
     -w "${HOME}" \
-    -v "${HOME}:${HOME}" \
+    -v "${HOME_MOUNT}:${HOME}" \
     ${EXTRA_DOCKER_RUN_ARGS:-} \
     ${mount_obmc_dir} \
     ${mount_ssc_dir} \
