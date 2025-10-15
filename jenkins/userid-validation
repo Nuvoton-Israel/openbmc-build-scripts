@@ -7,7 +7,7 @@
 #
 # Note: It is assumed this script is run as a part of a jenkins job triggered
 #       by the gerrit plugin. Therefore it assumes certain env variables
-#       provided by that plugin are avialable (i.e. GERRIT_PROJECT, ...)
+#       provided by that plugin are available (i.e. GERRIT_PROJECT, ...)
 #
 # Required Inputs:
 #  SSH_KEY:  Path to private ssh key used to post messages to gerrit
@@ -20,20 +20,7 @@ GERRIT_SSH_CMD=( \
 
 echo "Checking ${GERRIT_PROJECT}:${GERRIT_BRANCH}:${GERRIT_CHANGE_ID}:${GERRIT_PATCHSET_REVISION}"
 
-# shellcheck disable=2086 # GERRIT_COMMAND is purposefully wordsplit.
-COMMITTER_EMAIL=$(${GERRIT_COMMAND}/a/changes/${GERRIT_PROJECT/\//%2F}~${GERRIT_BRANCH}~${GERRIT_CHANGE_ID}/revisions/${GERRIT_PATCHSET_REVISION}/commit | python3 -c "import sys, json; sys.stdin.read(4); print(json.load(sys.stdin)['committer']['email'])")
-if [ "${COMMITTER_EMAIL}" = "" ]; then
-    echo "Unable to find committer."
-    "${GERRIT_SSH_CMD[@]}" review \
-        "${GERRIT_CHANGE_NUMBER},${GERRIT_PATCHSET_NUMBER}" \
-        --ok-to-test=0 "--message='Unable to determine committer'"
-    exit 1
-fi
-
-#echo "Commit by '${COMMITTER_EMAIL}'"
-# shellcheck disable=2086 # GERRIT_COMMAND is purposefully wordsplit.
-COMMITTER_USERNAME=$(${GERRIT_COMMAND}/a/accounts/${COMMITTER_EMAIL} | python3 -c "import sys, json; sys.stdin.read(4); print(json.load(sys.stdin)['username'])")
-#COMMITTER_USERNAME=`${GERRIT_COMMAND}/a/accounts/${COMMITTER_EMAIL}`
+COMMITTER_USERNAME=$("${GERRIT_SSH_CMD[@]}" query "${GERRIT_CHANGE_NUMBER}" --current-patch-set --format json | jq -r '.currentPatchSet.uploader.username | select (. != null )')
 echo "USERNAME: $COMMITTER_USERNAME"
 if [ "${COMMITTER_USERNAME}" = "" ]; then
     echo "Unable to determine github user for ${COMMITTER_EMAIL}."
@@ -63,6 +50,7 @@ fi
 
 # Write full list of users to a file
 GERRIT_CI_GROUPS=( \
+        aimvalley/ci-authorized \
         akamai/ci-authorized \
         alibaba/ci-authorized \
         amd/ci-authorized \
@@ -74,39 +62,53 @@ GERRIT_CI_GROUPS=( \
         bytedance/ci-authorized \
         celestica/ci-authorized \
         code-construct/ci-authorized \
+        coreweave/ci-authorized \
+        cornelis/ci-authorized \
+        dell/ci-authorized \
         depo/ci-authorized \
         erg/ci-authorized \
         equinix/ci-authorized \
         facebook/ci-authorized \
         fii/ci-authorized \
-        gager-in/ci-authorized \
+        gagar-in/ci-authorized \
         google/ci-authorized \
         hcl/ci-authorized \
+        hetzner/ci-authorized \
+        hp/ci-authorized \
         hpe/ci-authorized \
         ibm/ci-authorized \
         iei/ci-authorized \
         individual/ci-authorized \
+        ingrasys/ci-authorized \
         inspur/ci-authorized \
         intel/ci-authorized \
         inventec/ci-authorized \
         lenovo/ci-authorized \
         microsoft/ci-authorized \
+        mitac/ci-authorized \
+        multicoreware/ci-authorized \
+        napatech/ci-authorized \
         nineelements/ci-authorized \
         nuvoton/ci-authorized \
         nvidia/ci-authorized \
         openbmc/ci-authorized \
         pcpartner/ci-authorized \
         phytium/ci-authorized \
+        plexus/ci-authorized \
+        qualcomm/ci-authorized \
         quanta/ci-authorized \
         quic/ci-authorized \
-        rcs/ci-authorized \
+        raptorcs/ci-authorized \
+        scaleway/ci-authorized \
+        sipearl/ci-authorized \
         supermicro/ci-authorized \
         tencent/ci-authorized \
+        tenstorrent/ci-authorized \
+        triple-crown/ci-authorized \
         ufispace/ci-authorized \
         vaisala/ci-authorized \
         wistron/ci-authorized \
         wiwynn/ci-authorized \
-        yadro/ci-authorized \
     )
 
 rm -f "$WORKSPACE/users.txt"

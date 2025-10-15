@@ -12,7 +12,7 @@
 # When building locally set WORKSPACE to be the directory above the qemu
 # checkout:
 #   git clone https://github.com/qemu/qemu
-#   WORKSPACE=$PWD/qemu ~/openbmc-build-scripts/qemu-build.sh
+#   WORKSPACE=$PWD ~/openbmc-build-scripts/qemu-build.sh
 #
 ###############################################################################
 #
@@ -21,6 +21,9 @@
 #                     Default: "", proxy is not setup if this is not set
 #  WORKSPACE          Path of the workspace directory where the build will
 #                     occur, and output artifacts will be produced.
+#  DOCKER_REG:        <optional, the URL of a docker registry to utilize
+#                     instead of our default (public.ecr.aws/ubuntu)
+#                     (ex. docker.io)
 #
 ###############################################################################
 # Trace bash processing
@@ -34,8 +37,7 @@ if [ -z ${WORKSPACE+x} ]; then
     exit 1
 fi
 
-# Determine the architecture
-ARCH=$(uname -m)
+docker_reg=${DOCKER_REG:-"public.ecr.aws/ubuntu"}
 
 # Docker Image Build Variables:
 img_name=qemu-build
@@ -47,22 +49,6 @@ echo "Build started, $(date)"
 if [[ -n "${http_proxy}" ]]; then
     PROXY="RUN echo \"Acquire::http::Proxy \\"\"${http_proxy}/\\"\";\" > /etc/apt/apt.conf.d/000apt-cacher-ng-proxy"
 fi
-
-# Determine the prefix of the Dockerfile's base image
-case ${ARCH} in
-    "ppc64le")
-        DOCKER_BASE="ppc64le/"
-        ;;
-    "x86_64")
-        DOCKER_BASE=""
-        ;;
-    "aarch64")
-        DOCKER_BASE="arm64v8/"
-        ;;
-    *)
-        echo "Unsupported system architecture(${ARCH}) found for docker image"
-        exit 1
-esac
 
 # Create the docker run script
 export PROXY_HOST=${http_proxy/#http*:\/\/}
@@ -108,7 +94,7 @@ chmod a+x "${WORKSPACE}"/build.sh
 # !!!
 
 Dockerfile=$(cat << EOF
-FROM ${DOCKER_BASE}ubuntu:jammy
+FROM ${docker_reg}/ubuntu:jammy
 
 ${PROXY}
 
@@ -127,14 +113,10 @@ RUN apt-get update && apt-get install -yy --no-install-recommends \
     libslirp-dev \
     make \
     ninja-build \
+    python3-tomli \
     python3-venv \
     python3-yaml \
     iputils-ping
-
-RUN grep -q ${GROUPS[0]} /etc/group || groupadd -g ${GROUPS[0]} ${USER}
-RUN grep -q ${UID} /etc/passwd || useradd -d ${HOME} -m -u ${UID} -g ${GROUPS[0]} ${USER}
-USER ${USER}
-ENV HOME ${HOME}
 EOF
 )
 
@@ -144,10 +126,10 @@ if ! docker build -t ${img_name} - <<< "${Dockerfile}" ; then
 fi
 
 docker run \
+    --userns host \
+    --user "$UID:${GROUPS[0]}" \
     --rm=true \
     -e WORKSPACE="${WORKSPACE}" \
-    -w "${HOME}" \
-    --user="${USER}" \
-    -v "${HOME}":"${HOME}" \
+    -v "${WORKSPACE}":"${WORKSPACE}" \
     -t ${img_name} \
     "${WORKSPACE}"/build.sh

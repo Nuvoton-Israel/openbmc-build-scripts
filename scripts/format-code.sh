@@ -31,10 +31,12 @@ LINTERS_ALL=( \
         beautysh_sh \
         black \
         clang_format \
+        clang_tidy \
         eslint \
         flake8 \
         isort \
         markdownlint \
+        meson \
         prettier \
         shellcheck \
     )
@@ -109,6 +111,8 @@ export CLANG_FORMAT="clang-format"
 
 # Path to default config files for linters.
 CONFIG_PATH="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/config"
+TOOLS_PATH="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/tools"
+
 
 # Find repository root for `pwd` or $1.
 if [ -z "$1" ]; then
@@ -144,16 +148,56 @@ declare -A LINTER_CONFIG=()
 
 LINTER_REQUIRE+=([commit_spelling]="codespell")
 LINTER_TYPES+=([commit_spelling]="commit")
-function do_commit_spelling() {
-    # Run the codespell with openbmc spcific spellings on the patchset
-    echo -n "openbmc-dictionary - misspelling count >> "
-    sed "s/Signed-off-by.*//" "$@" | \
-        codespell -D "${CONFIG_PATH}/openbmc-spelling.txt" -d --count -
 
-    # Run the codespell with generic dictionary on the patchset
+commit_filename="$(mktemp)"
+function clean_up_file() {
+    rm "$commit_filename"
+}
+trap clean_up_file EXIT
+
+function find_codespell_dict_file() {
+    local python_codespell_dict
+    # @formatter:off
+    python_codespell_dict=$(python3 -c "
+import os.path as op
+import codespell_lib
+codespell_dir = op.dirname(codespell_lib.__file__)
+codespell_file = op.join(codespell_dir, 'data', 'dictionary.txt')
+print(codespell_file if op.isfile(codespell_file) else '', end='')
+" 2> /dev/null)
+    # @formatter:on
+
+    # Return the path if found, otherwise return an empty string
+    echo "$python_codespell_dict"
+}
+
+function do_commit_spelling() {
+    # Write the commit message to a temporary file
+    git log --format='%B' -1 > "$commit_filename"
+
+    # Some names or emails appear as false-positive misspellings, remove them
+    sed -i "s/Signed-off-by.*//" "$commit_filename"
+
+    # Get the path to the dictionary.txt file
+    local codespell_dict
+    codespell_dict=$(find_codespell_dict_file)
+
+    # Check if the dictionary file was found
+    if [[ -z "$codespell_dict" ]]; then
+        echo "Error: Could not find dictionary.txt file"
+        exit 1
+    fi
+
+    # Run the codespell with codespell dictionary on the patchset
+    echo -n "codespell-dictionary - misspelling count >> "
+    codespell -D "$codespell_dict" -d --count "$commit_filename"
+
+    # Run the codespell with builtin dictionary on the patchset
     echo -n "generic-dictionary - misspelling count >> "
-    sed "s/Signed-off-by.*//" "$@" | \
-        codespell --builtin clear,rare,en-GB_to_en-US -d --count -
+    codespell --builtin clear,rare,en-GB_to_en-US -d --count "$commit_filename"
+}
+function do_version_commit_spelling() {
+    echo codespell: "$(codespell --version)"
 }
 
 LINTER_REQUIRE+=([commit_gitlint]="gitlint")
@@ -161,6 +205,9 @@ LINTER_TYPES+=([commit_gitlint]="commit")
 function do_commit_gitlint() {
     gitlint --extra-path "${CONFIG_PATH}/gitlint/" \
         --config "${CONFIG_PATH}/.gitlint"
+}
+function do_version_commit_gitlint() {
+    gitlint --version | awk '{ print $3 }'
 }
 
 # We need different function style for bash/zsh vs plain sh, so beautysh is
@@ -172,17 +219,26 @@ LINTER_TYPES+=([beautysh]="bash;zsh")
 function do_beautysh() {
     beautysh --force-function-style fnpar "$@"
 }
+function do_version_beautysh() {
+    beautysh --version
+}
 LINTER_REQUIRE+=([beautysh_sh]="beautysh")
 LINTER_IGNORE+=([beautysh_sh]=".beautysh-ignore")
 LINTER_TYPES+=([beautysh_sh]="sh")
 function do_beautysh_sh() {
     beautysh --force-function-style paronly "$@"
 }
+function do_version_beautysh_sh() {
+    beautysh --version
+}
 
 LINTER_REQUIRE+=([black]="black")
 LINTER_TYPES+=([black]="python")
 function do_black() {
     black -l 79 "$@"
+}
+function do_version_black() {
+    black --version | head -n1
 }
 
 LINTER_REQUIRE+=([eslint]="eslint;.eslintrc.json;${CONFIG_PATH}/eslint-global-config.json")
@@ -194,6 +250,9 @@ function do_eslint() {
         --resolve-plugins-relative-to /usr/local/lib/node_modules \
         --no-error-on-unmatched-pattern "$@"
 }
+function do_version_eslint() {
+    eslint --version
+}
 
 LINTER_REQUIRE+=([flake8]="flake8")
 LINTER_IGNORE+=([flake8]=".flake8-ignore")
@@ -203,21 +262,36 @@ function do_flake8() {
     # We disable E203 and E501 because 'black' is handling these and they
     # disagree on best practices.
 }
+function do_version_flake8() {
+    flake8 --version
+}
 
 LINTER_REQUIRE+=([isort]="isort")
 LINTER_TYPES+=([isort]="python")
 function do_isort() {
     isort --profile black "$@"
 }
+function do_version_isort() {
+    isort --version-number
+}
 
 LINTER_REQUIRE+=([markdownlint]="markdownlint;.markdownlint.yaml;${CONFIG_PATH}/markdownlint.yaml")
 LINTER_IGNORE+=([markdownlint]=".markdownlint-ignore")
 LINTER_TYPES+=([markdownlint]="markdown")
 function do_markdownlint() {
-    markdownlint --config "${LINTER_CONFIG[markdownlint]}" \
-        --disable line-length -- "$@" || \
-        echo -e "    ${YELLOW}Failed markdownlint; temporarily ignoring."
-    # We disable line-length because prettier should handle prose wrap for us.
+    markdownlint --config "${LINTER_CONFIG[markdownlint]}" -- "$@"
+}
+function do_version_markdownlint() {
+    markdownlint --version
+}
+
+LINTER_REQUIRE+=([meson]="meson;meson.build")
+LINTER_TYPES+=([meson]="meson")
+function do_meson() {
+    meson format -i "$@"
+}
+function do_version_meson() {
+    meson --version
 }
 
 LINTER_REQUIRE+=([prettier]="prettier;.prettierrc.yaml;${CONFIG_PATH}/prettierrc.yaml")
@@ -226,6 +300,9 @@ LINTER_TYPES+=([prettier]="json;markdown;yaml")
 function do_prettier() {
     prettier --config "${LINTER_CONFIG[prettier]}" --write "$@"
 }
+function do_version_prettier() {
+    prettier --version
+}
 
 LINTER_REQUIRE+=([shellcheck]="shellcheck")
 LINTER_IGNORE+=([shellcheck]=".shellcheck-ignore")
@@ -233,12 +310,27 @@ LINTER_TYPES+=([shellcheck]="bash;sh")
 function do_shellcheck() {
     shellcheck --color=never -x "$@"
 }
+function do_version_shellcheck() {
+    shellcheck --version | awk '/^version/ { print $2 }'
+}
 
 LINTER_REQUIRE+=([clang_format]="clang-format;.clang-format")
 LINTER_IGNORE+=([clang_format]=".clang-ignore;.clang-format-ignore")
 LINTER_TYPES+=([clang_format]="c;cpp")
 function do_clang_format() {
     "${CLANG_FORMAT}" -i "$@"
+}
+function do_version_clang_format() {
+    "${CLANG_FORMAT}" --version
+}
+
+LINTER_REQUIRE+=([clang_tidy]="true")
+LINTER_TYPES+=([clang_tidy]="clang-tidy-config")
+function do_clang_tidy() {
+    "${TOOLS_PATH}/config-clang-tidy" format
+}
+function do_version_clang_tidy() {
+    echo openbmc-build-scripts: "$(git rev-parse HEAD)"
 }
 
 function get_file_type()
@@ -259,7 +351,10 @@ function get_file_type()
 
             # Special files.
         .git/COMMIT_EDITMSG) echo "commit" && return ;;
+        .clang-format) echo "clang-format-config" && return ;;
+        .clang-tidy) echo "clang-tidy-config" && return ;;
         meson.build) echo "meson" && return ;;
+        meson.options) echo "meson" && return ;;
     esac
 
     case "$(file "$1")" in
@@ -329,9 +424,8 @@ fi
 
 # Find all the files in the git repository and organize by type.
 declare -A FILES=()
-if [ -e .git/COMMIT_EDITMSG ]; then
-    FILES+=([commit]=".git/COMMIT_EDITMSG")
-fi
+FILES+=([commit]=".git")
+
 while read -r file; do
     ftype="$(get_file_type "$file")"
     FILES+=([$ftype]="$(echo -ne "$file;${FILES[$ftype]:-}")")
@@ -377,9 +471,10 @@ for op in "${LINTERS_AVAILABLE[@]}"; do
 
     # Call the linter now with all the files.
     if [ 0 -ne ${#LINTER_FILES[@]} ]; then
-        echo -e "    ${BLUE}Running $op${NORMAL}"
+        echo -e "    ${BLUE}Running $op${NORMAL} ($(do_version_"$op"))"
         if ! "do_$op" "${LINTER_FILES[@]}" ; then
             LINTERS_FAILED+=([$op]=1)
+            echo -e "    ${RED}$op - FAILED${NORMAL}"
         fi
     else
         echo -e "    ${YELLOW}${op}:${NORMAL} all applicable files are on ignore-lists"
@@ -389,7 +484,7 @@ done
 # Check for failing linters.
 if [ 0 -ne ${#LINTERS_FAILED[@]} ]; then
     for op in "${!LINTERS_FAILED[@]}"; do
-        echo -e "$op: ${RED}FAILED${NORMAL}"
+        echo -e "$op: ${RED}FAILED${NORMAL} (see prior failure)"
     done
     exit 1
 fi

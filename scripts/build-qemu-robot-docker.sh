@@ -8,7 +8,9 @@
 #                    default is empty, and no mirror is used.
 #  PIP_MIRROR:       <optional, the URL of a PIP mirror>
 #                    default is empty, and no mirror is used.
-#
+#  DOCKER_REG:       <optional, the URL of a docker registry to utilize
+#                    instead of our default (public.ecr.aws/ubuntu)
+#                    (ex. docker.io)
 #  Parameters:
 #   parm1:  <optional, the name of the docker image to generate>
 #            default is openbmc/ubuntu-robot-qemu
@@ -19,16 +21,10 @@ set -uo pipefail
 http_proxy=${http_proxy:-}
 
 DOCKER_IMG_NAME=${1:-"openbmc/ubuntu-robot-qemu"}
-DISTRO=${2:-"ubuntu:jammy"}
+DISTRO=${2:-"ubuntu:plucky"}
 UBUNTU_MIRROR=${UBUNTU_MIRROR:-""}
 PIP_MIRROR=${PIP_MIRROR:-""}
-
-# Determine our architecture, ppc64le or the other one
-if [ "$(uname -m)" == "ppc64le" ]; then
-    DOCKER_BASE="ppc64le/"
-else
-    DOCKER_BASE=""
-fi
+docker_reg=${DOCKER_REG:-"public.ecr.aws/ubuntu"}
 
 MIRROR=""
 if [[ -n "${UBUNTU_MIRROR}" ]]; then
@@ -52,7 +48,7 @@ fi
 ################################# docker img # #################################
 # Create docker image that can run QEMU and Robot Tests
 Dockerfile=$(cat << EOF
-FROM ${DOCKER_BASE}${DISTRO}
+FROM ${docker_reg}/${DISTRO}
 
 ${MIRROR}
 
@@ -62,9 +58,6 @@ RUN apt-get update && apt-get install -yy \
     debianutils \
     gawk \
     git \
-    python2 \
-    python2-dev \
-    python-setuptools \
     python3 \
     python3-dev \
     python3-setuptools \
@@ -86,10 +79,11 @@ RUN apt-get update && apt-get install -yy \
     expect \
     curl \
     build-essential \
+    libdbus-glib-1-2 \
     libpixman-1-0 \
     libglib2.0-0 \
     sshpass \
-    libasound2 \
+    liboss4-salsa-asound2 \
     libfdt1 \
     libpcre3 \
     libslirp-dev \
@@ -109,17 +103,17 @@ RUN apt-get update -qqy \
   && mv /opt/firefox /opt/firefox-112.0.2 \
   && ln -fs /opt/firefox-112.0.2/firefox /usr/bin/firefox
 
-ENV HOME ${HOME}
+ENV HOME=${HOME}
 
 ${PIP_MIRROR_CMD}
 
-RUN pip3 install \
+RUN pip3 install --break-system-packages \
     tox \
     requests \
     retrying \
     websocket-client \
     json2yaml \
-    robotframework \
+    robotframework==7.2.2 \
     robotframework-requests \
     robotframework-jsonlibrary \
     robotframework-sshlibrary \
@@ -139,13 +133,24 @@ RUN pip3 install \
     selenium==4.8.2 \
     urllib3 \
     click \
-    xvfbwrapper==0.2.9
+    xvfbwrapper==0.2.9 \
+    aenum==3.1.15 \
+    colorama==0.4.6 \
+    pyasn1==0.6.1 \
+    pyasn1_modules==0.4.1 \
+    sseclient-py==1.8.0
 
 RUN wget https://github.com/mozilla/geckodriver/releases/download/v0.32.2/geckodriver-v0.32.2-linux64.tar.gz \
         && tar xvzf geckodriver-*.tar.gz \
         && mv geckodriver /usr/local/bin \
         && chmod a+x /usr/local/bin/geckodriver
 
+# pulled from: https://gerrit.openbmc.org/c/openbmc/openbmc-build-scripts/+/71562
+# Latest Ubuntu added a default user (ubuntu), which takes 1000 UID.
+# If the user calling this build script happens to also have a UID of 1000
+# then the container no longer will work. Delete the new ubuntu user
+# so there is no conflict
+RUN userdel -r ubuntu
 RUN grep -q ${GROUPS[0]} /etc/group || groupadd -g ${GROUPS[0]} ${USER}
 RUN grep -q ${UID} /etc/passwd || useradd -d ${HOME} -l -m -u ${UID} -g ${GROUPS[0]} \
                     ${USER}

@@ -8,6 +8,7 @@ prior to executing its unit tests.
 """
 
 import argparse
+import json
 import multiprocessing
 import os
 import platform
@@ -24,9 +25,9 @@ from git import Repo
 # interpreter is not used directly but this resolves dependency ordering
 # that would be broken if we didn't include it.
 from mesonbuild import interpreter  # noqa: F401
-from mesonbuild import coredata, optinterpreter
-from mesonbuild.mesonlib import OptionKey
+from mesonbuild import optinterpreter, options
 from mesonbuild.mesonlib import version_compare as meson_version_compare
+from mesonbuild.options import OptionKey, OptionStore
 
 
 class DepTree:
@@ -372,7 +373,10 @@ def build_dep_tree(name, pkgdir, dep_added, head, branch, dep_tree=None):
 
 
 def run_cppcheck():
-    if not os.path.exists(os.path.join("build", "compile_commands.json")):
+    if (
+        not os.path.exists(os.path.join("build", "compile_commands.json"))
+        or NO_CPPCHECK
+    ):
         return None
 
     with TemporaryDirectory() as cpp_dir:
@@ -704,7 +708,7 @@ class Autotools(BuildSystem):
         ]
         conf_flags.extend(
             [
-                self._configure_feature("code-coverage", build_for_testing),
+                self._configure_feature("code-coverage", False),
                 self._configure_feature("valgrind", build_for_testing),
             ]
         )
@@ -722,6 +726,7 @@ class Autotools(BuildSystem):
 
     def install(self):
         check_call_cmd("sudo", "-n", "--", *(make_parallel + ["install"]))
+        check_call_cmd("sudo", "-n", "--", "ldconfig")
 
     def test(self):
         try:
@@ -758,11 +763,17 @@ class CMake(BuildSystem):
             check_call_cmd(
                 "cmake",
                 "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                "-DCMAKE_CXX_FLAGS='-DBOOST_USE_VALGRIND'",
                 "-DITESTS=ON",
                 ".",
             )
         else:
-            check_call_cmd("cmake", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", ".")
+            check_call_cmd(
+                "cmake",
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                "-DCMAKE_CXX_FLAGS='-DBOOST_USE_VALGRIND'",
+                ".",
+            )
 
     def build(self):
         check_call_cmd(
@@ -776,6 +787,7 @@ class CMake(BuildSystem):
 
     def install(self):
         check_call_cmd("sudo", "cmake", "--install", ".")
+        check_call_cmd("sudo", "-n", "--", "ldconfig")
 
     def test(self):
         if make_target_exists("test"):
@@ -804,6 +816,14 @@ class CMake(BuildSystem):
 
 
 class Meson(BuildSystem):
+    @staticmethod
+    def _project_name(path):
+        doc = subprocess.check_output(
+            ["meson", "introspect", "--projectinfo", path],
+            stderr=subprocess.STDOUT,
+        ).decode("utf-8")
+        return json.loads(doc)["descriptive_name"]
+
     def __init__(self, package=None, path=None):
         super(Meson, self).__init__(package, path)
 
@@ -821,7 +841,7 @@ class Meson(BuildSystem):
                 continue
             with open(os.path.join(root, "meson.build"), "rt") as f:
                 build_contents = f.read()
-            pattern = r"dependency\('([^']*)'.*?\),?\n"
+            pattern = r"dependency\('([^']*)'.*?\),?"
             for match in re.finditer(pattern, build_contents):
                 group = match.group(1)
                 maybe_dep = DEPENDENCIES["PKG_CHECK_MODULES"].get(group)
@@ -837,7 +857,8 @@ class Meson(BuildSystem):
         Parameters:
         options_file        The file containing options
         """
-        oi = optinterpreter.OptionInterpreter("")
+        store = OptionStore(is_cross=False)
+        oi = optinterpreter.OptionInterpreter(store, "")
         oi.process(options_file)
         return oi.options
 
@@ -887,15 +908,15 @@ class Meson(BuildSystem):
         opt                 The meson option which we are setting
         val                 The value being converted
         """
-        if isinstance(opts[key], coredata.UserBooleanOption):
+        if isinstance(opts[key], options.UserBooleanOption):
             str_val = self._configure_boolean(val)
-        elif isinstance(opts[key], coredata.UserFeatureOption):
+        elif isinstance(opts[key], options.UserFeatureOption):
             str_val = self._configure_feature(val)
         else:
             raise Exception("Unknown meson option type")
         return "-D{}={}".format(key, str_val)
 
-    def configure(self, build_for_testing):
+    def get_configure_flags(self, build_for_testing):
         self.build_for_testing = build_for_testing
         meson_options = {}
         if os.path.exists("meson.options"):
@@ -906,6 +927,7 @@ class Meson(BuildSystem):
             "-Db_colorout=never",
             "-Dwerror=true",
             "-Dwarning_level=3",
+            "-Dcpp_args='-DBOOST_USE_VALGRIND'",
         ]
         if build_for_testing:
             # -Ddebug=true -Doptimization=g is helpful for abi-dumper but isn't a combination that
@@ -934,6 +956,10 @@ class Meson(BuildSystem):
             )
         if MESON_FLAGS.get(self.package) is not None:
             meson_flags.extend(MESON_FLAGS.get(self.package))
+        return meson_flags
+
+    def configure(self, build_for_testing):
+        meson_flags = self.get_configure_flags(build_for_testing)
         try:
             check_call_cmd(
                 "meson", "setup", "--reconfigure", "build", *meson_flags
@@ -942,11 +968,14 @@ class Meson(BuildSystem):
             shutil.rmtree("build", ignore_errors=True)
             check_call_cmd("meson", "setup", "build", *meson_flags)
 
+        self.package = Meson._project_name("build")
+
     def build(self):
         check_call_cmd("ninja", "-C", "build")
 
     def install(self):
         check_call_cmd("sudo", "-n", "--", "ninja", "-C", "build", "install")
+        check_call_cmd("sudo", "-n", "--", "ldconfig")
 
     def test(self):
         # It is useful to check various settings of the meson.build file
@@ -980,16 +1009,15 @@ class Meson(BuildSystem):
                         "-C",
                         "build",
                         "--setup",
-                        setup,
-                        "-t",
-                        "0",
+                        "{}:{}".format(self.package, setup),
+                        "__likely_not_a_test__",
                     ],
                     stderr=subprocess.STDOUT,
                 )
         except CalledProcessError as e:
             output = e.output
         output = output.decode("utf-8")
-        return not re.search("Test setup .* not found from project", output)
+        return not re.search("Unknown test setup '[^']+'[.]", output)
 
     def _maybe_valgrind(self):
         """
@@ -1011,7 +1039,7 @@ class Meson(BuildSystem):
                     "build",
                     "--print-errorlogs",
                     "--setup",
-                    "valgrind",
+                    "{}:valgrind".format(self.package),
                 )
             else:
                 check_call_cmd(
@@ -1023,7 +1051,7 @@ class Meson(BuildSystem):
                     "build",
                     "--print-errorlogs",
                     "--wrapper",
-                    "valgrind",
+                    "valgrind --error-exitcode=1",
                 )
         except CalledProcessError:
             raise Exception("Valgrind tests failed")
@@ -1033,16 +1061,37 @@ class Meson(BuildSystem):
 
         # Run clang-tidy only if the project has a configuration
         if os.path.isfile(".clang-tidy"):
-            os.environ["CXX"] = "clang++"
+            clang_env = os.environ.copy()
+            clang_env["CC"] = "clang"
+            clang_env["CXX"] = "clang++"
+            # Clang-20 currently has some issue with libstdcpp's
+            # std::forward_like which results in a bunch of compile errors.
+            # Adding -fno-builtin-std-forward_like causes them to go away.
+            clang_env["CXXFLAGS"] = "-fno-builtin-std-forward_like"
+            clang_env["CC_LD"] = "lld"
+            clang_env["CXX_LD"] = "lld"
             with TemporaryDirectory(prefix="build", dir=".") as build_dir:
-                check_call_cmd("meson", "setup", build_dir)
+                check_call_cmd("meson", "setup", build_dir, env=clang_env)
                 if not os.path.isfile(".openbmc-no-clang"):
-                    check_call_cmd("meson", "compile", "-C", build_dir)
+                    check_call_cmd(
+                        "meson", "compile", "-C", build_dir, env=clang_env
+                    )
                 try:
-                    check_call_cmd("ninja", "-C", build_dir, "clang-tidy")
+                    check_call_cmd(
+                        "ninja",
+                        "-C",
+                        build_dir,
+                        "clang-tidy-fix",
+                        env=clang_env,
+                    )
                 except subprocess.CalledProcessError:
                     check_call_cmd(
-                        "git", "-C", CODE_SCAN_DIR, "--no-pager", "diff"
+                        "git",
+                        "-C",
+                        CODE_SCAN_DIR,
+                        "--no-pager",
+                        "diff",
+                        env=clang_env,
                     )
                     raise
         # Run the basic clang static analyzer otherwise
@@ -1055,13 +1104,15 @@ class Meson(BuildSystem):
         # in the build process to ensure we don't have undefined
         # runtime code.
         if is_sanitize_safe():
-            check_call_cmd(
-                "meson",
-                "configure",
-                "build",
-                "-Db_sanitize=address,undefined",
-                "-Db_lundef=false",
-            )
+            meson_flags = self.get_configure_flags(self.build_for_testing)
+            meson_flags.append("-Db_sanitize=address,undefined")
+            try:
+                check_call_cmd(
+                    "meson", "setup", "--reconfigure", "build", *meson_flags
+                )
+            except Exception:
+                shutil.rmtree("build", ignore_errors=True)
+                check_call_cmd("meson", "setup", "build", *meson_flags)
             check_call_cmd(
                 "meson",
                 "test",
@@ -1070,14 +1121,25 @@ class Meson(BuildSystem):
                 "--print-errorlogs",
                 "--logbase",
                 "testlog-ubasan",
-                env=os.environ | {"UBSAN_OPTIONS": "halt_on_error=1"},
             )
             # TODO: Fix memory sanitizer
             # check_call_cmd('meson', 'configure', 'build',
             #                '-Db_sanitize=memory')
             # check_call_cmd('meson', 'test', '-C', 'build'
             #                '--logbase', 'testlog-msan')
-            check_call_cmd("meson", "configure", "build", "-Db_sanitize=none")
+            meson_flags = [
+                s.replace(
+                    "-Db_sanitize=address,undefined", "-Db_sanitize=none"
+                )
+                for s in meson_flags
+            ]
+            try:
+                check_call_cmd(
+                    "meson", "setup", "--reconfigure", "build", *meson_flags
+                )
+            except Exception:
+                shutil.rmtree("build", ignore_errors=True)
+                check_call_cmd("meson", "setup", "build", *meson_flags)
         else:
             sys.stderr.write("###### Skipping sanitizers ######\n")
 
@@ -1135,7 +1197,15 @@ class Meson(BuildSystem):
             ):
                 raise Exception(
                     "dep.get_variable() with positional argument requires "
-                    + "meson_Version: '>=0.58'"
+                    + "meson_version: '>=0.58'"
+                )
+
+        if "relative_to(" in build_contents:
+            if not meson_version or not meson_version_compare(
+                meson_version, ">=1.3.0"
+            ):
+                raise Exception(
+                    "fs.relative_to() requires meson_version: '>=1.3.0'"
                 )
 
 
@@ -1295,6 +1365,14 @@ if __name__ == "__main__":
         default=False,
         help="Only run test cases, no other validation",
     )
+    parser.add_argument(
+        "--no-cppcheck",
+        dest="NO_CPPCHECK",
+        action="store_true",
+        required=False,
+        default=False,
+        help="Do not run cppcheck",
+    )
     arg_inttests = parser.add_mutually_exclusive_group()
     arg_inttests.add_argument(
         "--integration-tests",
@@ -1340,6 +1418,7 @@ if __name__ == "__main__":
     WORKSPACE = args.WORKSPACE
     UNIT_TEST_PKG = args.PACKAGE
     TEST_ONLY = args.TEST_ONLY
+    NO_CPPCHECK = args.NO_CPPCHECK
     INTEGRATION_TEST = args.INTEGRATION_TEST
     BRANCH = args.BRANCH
     FORMAT_CODE = args.FORMAT
