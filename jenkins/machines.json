@@ -1,0 +1,46 @@
+{
+    "master": {
+        "anacapa": {},
+        "bletchley": {},
+        "bletchley15": {},
+        "catalina": {},
+        "clemente": {},
+        "e3c246d4i": {},
+        "evb-npcm845": {},
+        "gb200nvl-obmc": {},
+        "gbs": {},
+        "harma": {},
+        "minerva": {},
+        "p10bmc": {},
+        "rainiera6": { "build": "disabled" },
+        "rainiera7": { "build": "disabled" },
+        "romulus": {
+            "qemu": { "image": "obmc-phosphor-image-romulus.static.mtd" }
+        },
+        "santabarbara": {},
+        "sanmiguel": {},
+        "ventura": {},
+        "ventura2": {},
+        "ventura2a7": { "build": "disabled" },
+        "yosemite4": {},
+        "yosemite5": {}
+    },
+    "wrynose": {
+        "catalina": {},
+        "e3c246d4i": {},
+        "evb-npcm845": {},
+        "p10bmc": {},
+        "romulus": {
+            "qemu": { "image": "obmc-phosphor-image-romulus.static.mtd" }
+        },
+        "yosemite4": {}
+    },
+    "_schema": {
+        "build": "required|advisory|disabled (default: required)",
+        "qemu": {
+            "image": "flash image filename",
+            "pad": "optional padding size",
+            "build": "required|advisory|disabled (default: required)"
+        }
+    }
+}

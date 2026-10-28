@@ -129,11 +129,24 @@ HOME_MOUNT="${HOME_MOUNT:-$HOME}"
 
 MIRROR=""
 if [[ -n "${UBUNTU_MIRROR}" ]]; then
+    # Common apt sources configuration for all mirror types
     MIRROR="RUN echo \"deb ${UBUNTU_MIRROR} \$(. /etc/os-release && echo \$VERSION_CODENAME) main restricted universe multiverse\" > /etc/apt/sources.list && \
         echo \"deb ${UBUNTU_MIRROR} \$(. /etc/os-release && echo \$VERSION_CODENAME)-updates main restricted universe multiverse\" >> /etc/apt/sources.list && \
         echo \"deb ${UBUNTU_MIRROR} \$(. /etc/os-release && echo \$VERSION_CODENAME)-security main restricted universe multiverse\" >> /etc/apt/sources.list && \
         echo \"deb ${UBUNTU_MIRROR} \$(. /etc/os-release && echo \$VERSION_CODENAME)-proposed main restricted universe multiverse\" >> /etc/apt/sources.list && \
         echo \"deb ${UBUNTU_MIRROR} \$(. /etc/os-release && echo \$VERSION_CODENAME)-backports main restricted universe multiverse\" >> /etc/apt/sources.list"
+
+    # If using HTTPS mirror, we need to switch to it first, then install ca-certificates
+    # We configure apt to skip certificate verification initially, then install ca-certificates
+    if [[ "${UBUNTU_MIRROR}" == https://* ]]; then
+        MIRROR="${MIRROR}
+
+        # Temporarily disable certificate verification to install ca-certificates
+        RUN echo 'Acquire::https::Verify-Peer \"false\";' > /etc/apt/apt.conf.d/99temp-no-verify && \
+            apt-get update && \
+            apt-get install -y --no-install-recommends ca-certificates && \
+        rm /etc/apt/apt.conf.d/99temp-no-verify"
+    fi
 fi
 
 # Timestamp for job
@@ -223,6 +236,7 @@ if [[ "${distro}" == fedora ]];then
       gcc \
       gcc-c++ \
       git \
+      git-lfs \
       lz4 \
       make \
       patch \
@@ -252,7 +266,7 @@ if [[ "${distro}" == fedora ]];then
   RUN grep -q ${UID} /etc/passwd || useradd -d ${HOME} -m -u ${UID} -g ${GROUPS[0]} ${USER}
 
   USER ${USER}
-  ENV HOME ${HOME}
+  ENV HOME=${HOME}
 EOF
     )
 
@@ -268,7 +282,7 @@ elif [[ "${distro}" == ubuntu ]]; then
   ${PROXY}
   ${MIRROR}
 
-  ENV DEBIAN_FRONTEND noninteractive
+  ENV DEBIAN_FRONTEND=noninteractive
 
   RUN apt-get update && apt-get install -yy \
       build-essential \
@@ -279,6 +293,7 @@ elif [[ "${distro}" == ubuntu ]]; then
       file \
       gawk \
       git \
+      git-lfs \
       iputils-ping \
       libdata-dumper-simple-perl \
       lz4 \
@@ -295,9 +310,9 @@ elif [[ "${distro}" == ubuntu ]]; then
 
   # Set the locale
   RUN locale-gen en_US.UTF-8
-  ENV LANG en_US.UTF-8
-  ENV LANGUAGE en_US:en
-  ENV LC_ALL en_US.UTF-8
+  ENV LANG=en_US.UTF-8
+  ENV LANGUAGE=en_US:en
+  ENV LC_ALL=en_US.UTF-8
 
   # Latest Ubuntu added a default user (ubuntu), which takes 1000 UID.
   # If the user calling this build script happens to also have a UID of 1000
@@ -308,7 +323,7 @@ elif [[ "${distro}" == ubuntu ]]; then
   RUN grep -q ${UID} /etc/passwd || useradd -d ${HOME} -m -u ${UID} -g ${GROUPS[0]} ${USER}
 
   USER ${USER}
-  ENV HOME ${HOME}
+  ENV HOME=${HOME}
 EOF
     )
 fi

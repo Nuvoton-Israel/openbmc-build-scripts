@@ -50,6 +50,7 @@ fi
 
 # Write full list of users to a file
 GERRIT_CI_GROUPS=( \
+        aeon/ci-authorized \
         aimvalley/ci-authorized \
         akamai/ci-authorized \
         alibaba/ci-authorized \
@@ -59,17 +60,21 @@ GERRIT_CI_GROUPS=( \
         arm/ci-authorized \
         aspeed/ci-authorized \
         asus/ci-authorized \
+        axiado/ci-authorized \
         bytedance/ci-authorized \
         celestica/ci-authorized \
+        cloudflare/ci-authorized \
         code-construct/ci-authorized \
         coreweave/ci-authorized \
         cornelis/ci-authorized \
         dell/ci-authorized \
         depo/ci-authorized \
+        einfochips/ci-authorized \
         erg/ci-authorized \
         equinix/ci-authorized \
         facebook/ci-authorized \
         fii/ci-authorized \
+        flex/ci-authorized \
         gagar-in/ci-authorized \
         google/ci-authorized \
         hcl/ci-authorized \
@@ -83,6 +88,7 @@ GERRIT_CI_GROUPS=( \
         inspur/ci-authorized \
         intel/ci-authorized \
         inventec/ci-authorized \
+        jabil/ci-authorized \
         lenovo/ci-authorized \
         microsoft/ci-authorized \
         mitac/ci-authorized \
@@ -91,6 +97,7 @@ GERRIT_CI_GROUPS=( \
         nineelements/ci-authorized \
         nuvoton/ci-authorized \
         nvidia/ci-authorized \
+        nxp/ci-authorized \
         openbmc/ci-authorized \
         pcpartner/ci-authorized \
         phytium/ci-authorized \
@@ -102,6 +109,7 @@ GERRIT_CI_GROUPS=( \
         scaleway/ci-authorized \
         sipearl/ci-authorized \
         supermicro/ci-authorized \
+        techdesign/ci-authorized \
         tencent/ci-authorized \
         tenstorrent/ci-authorized \
         triple-crown/ci-authorized \
@@ -109,6 +117,7 @@ GERRIT_CI_GROUPS=( \
         vaisala/ci-authorized \
         wistron/ci-authorized \
         wiwynn/ci-authorized \
+        xslab/ci-authorized \
     )
 
 rm -f "$WORKSPACE/users.txt"

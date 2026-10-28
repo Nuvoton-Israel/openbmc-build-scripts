@@ -11,7 +11,8 @@ set -e
 function display_help()
 {
     echo "usage: format-code.sh [-h | --help] [--no-diff] [--list-tools]"
-    echo "                      [--disable <tool>] [--enable <tool>] [<path>]"
+    echo "                      [--disable <tool>] [--enable <tool>]"
+    echo "                      [--no-secondary] [<path>]"
     echo
     echo "Format and lint a repository."
     echo
@@ -21,10 +22,12 @@ function display_help()
     echo "    --disable <tool>  Disable linter"
     echo "    --enable <tool>   Enable only specific linters"
     echo "    --allow-missing   Run even if linters are not all present"
+    echo "    --no-secondary    Skip secondary formatter scripts"
     echo "    path              Path to git repository (default to pwd)"
 }
 
 LINTERS_ALL=( \
+        ast_grep \
         commit_gitlint \
         commit_spelling \
         beautysh \
@@ -44,7 +47,7 @@ LINTERS_DISABLED=()
 LINTERS_ENABLED=()
 declare -A LINTERS_FAILED=()
 
-eval set -- "$(getopt -o 'h' --long 'help,list-tools,no-diff,disable:,enable:,allow-missing' -n 'format-code.sh' -- "$@")"
+eval set -- "$(getopt -o 'h' --long 'help,list-tools,no-diff,disable:,enable:,allow-missing,no-secondary' -n 'format-code.sh' -- "$@")"
 while true; do
     case "$1" in
         '-h'|'--help')
@@ -79,6 +82,11 @@ while true; do
             shift
             ;;
 
+        '--no-secondary')
+            OPTION_NO_SECONDARY=1
+            shift
+            ;;
+
         '--')
             shift
             break
@@ -110,8 +118,9 @@ fi
 export CLANG_FORMAT="clang-format"
 
 # Path to default config files for linters.
-CONFIG_PATH="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/config"
-TOOLS_PATH="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/tools"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG_PATH="${REPO_ROOT}/config"
+TOOLS_PATH="${REPO_ROOT}/tools"
 
 
 # Find repository root for `pwd` or $1.
@@ -210,6 +219,15 @@ function do_version_commit_gitlint() {
     gitlint --version | awk '{ print $3 }'
 }
 
+LINTER_REQUIRE+=([ast_grep]="ast-grep;.astgrep/sgconfig.yml")
+LINTER_TYPES+=([ast_grep]="c;cpp")
+function do_ast_grep() {
+    ast-grep scan --config .astgrep/sgconfig.yml --error "$@"
+}
+function do_version_ast_grep() {
+    ast-grep --version
+}
+
 # We need different function style for bash/zsh vs plain sh, so beautysh is
 # split into two linters.  "function foo()" is not traditionally accepted
 # POSIX-shell syntax, so shellcheck barfs on it.
@@ -241,13 +259,12 @@ function do_version_black() {
     black --version | head -n1
 }
 
-LINTER_REQUIRE+=([eslint]="eslint;.eslintrc.json;${CONFIG_PATH}/eslint-global-config.json")
+LINTER_REQUIRE+=([eslint]="eslint;eslint.config.js;${CONFIG_PATH}/eslint.config.js")
 LINTER_IGNORE+=([eslint]=".eslintignore")
 LINTER_TYPES+=([eslint]="json")
 function do_eslint() {
-    eslint --no-eslintrc -c "${LINTER_CONFIG[eslint]}" \
+    eslint --no-config-lookup -c "${LINTER_CONFIG[eslint]}" \
         --ext .json --format=stylish \
-        --resolve-plugins-relative-to /usr/local/lib/node_modules \
         --no-error-on-unmatched-pattern "$@"
 }
 function do_version_eslint() {
@@ -502,12 +519,14 @@ fi
 
 # Sometimes your situation is terrible enough that you need the flexibility.
 # For example, phosphor-mboxd.
-for formatter in "format-code.sh" "format-code"; do
-    if [[ -x "${formatter}" ]]; then
-        echo -e "    ${BLUE}Calling secondary formatter:${NORMAL} ${formatter}"
-        "./${formatter}"
-        if [ -z "$OPTION_NO_DIFF" ]; then
-            git --no-pager diff --exit-code
+if [ -z "$OPTION_NO_SECONDARY" ]; then
+    for formatter in "format-code.sh" "format-code"; do
+        if [[ -x "${formatter}" ]]; then
+            echo -e "    ${BLUE}Calling secondary formatter:${NORMAL} ${formatter}"
+            "./${formatter}"
+            if [ -z "$OPTION_NO_DIFF" ]; then
+                git --no-pager diff --exit-code
+            fi
         fi
-    fi
-done
+    done
+fi

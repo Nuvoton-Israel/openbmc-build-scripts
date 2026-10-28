@@ -1,0 +1,124 @@
+properties([
+    buildDiscarder(logRotator(daysToKeepStr: '3')),
+    parameters([
+        string(name: 'GERRIT_REFSPEC', defaultValue: 'refs/heads/master'),
+        string(name: 'GERRIT_PROJECT', defaultValue: 'openbmc/openbmc')
+    ]),
+    pipelineTriggers([
+        [
+            $class: 'GerritTrigger',
+            silentMode: false,
+            serverName: 'gerrit.openbmc.org',
+            gerritProjects: [[
+                compareType: 'PLAIN',
+                pattern: 'openbmc/openbmc',
+                branches: [
+                    [compareType: 'PLAIN', pattern: 'master'],
+                    [compareType: 'PLAIN', pattern: 'wrynose']
+                ]
+            ]],
+            triggerOnEvents: [[
+                $class: 'PluginCommentAddedEvent',
+                verdictCategory: 'Ok-To-Test',
+                commentAddedTriggerApprovalValue: '1'
+            ]]
+        ]
+    ])
+])
+
+def branch = ''
+def config = [:]
+def buildTargets = []
+
+timestamps {
+    stage('Setup') {
+        node('docker-builder') {
+            try {
+                checkout scm
+                config = readJSON file: 'jenkins/machines.json'
+                branch = env.GERRIT_BRANCH ?: 'master'
+                def machines = config[branch]
+                if (machines == null) {
+                    error "Unknown branch: ${branch}"
+                }
+                buildTargets = machines.findAll { k, v -> v.build != "disabled" }.keySet() as List
+                buildTargets.add('repotest')
+                echo "Building targets for ${branch}: ${buildTargets}"
+            } finally {
+                cleanWs()
+            }
+        }
+    }
+
+    stage('Set Build Name') {
+        currentBuild.displayName = "#${BUILD_NUMBER}-${env.GERRIT_PATCHSET_UPLOADER_NAME}-${env.GERRIT_PROJECT}"
+    }
+
+    stage('Build Matrix') {
+        def results = [:]
+        def urls = [:]
+        def branches = [:]
+        buildTargets.each { target ->
+            def machine = config[branch][target]
+            def qemu = machine?.qemu
+            def buildStr = machine?.build ?: 'required'
+            def qemuBuildStr = qemu ? (qemu.build ?: 'required') : 'disabled'
+            branches[target] = {
+                try {
+                    def run = build job: './CI-MISC/openbmc-build-target',
+                        parameters: [
+                            string(name: 'target', value: target),
+                            string(name: 'GERRIT_REFSPEC', value: params.GERRIT_REFSPEC),
+                            string(name: 'GERRIT_PROJECT', value: params.GERRIT_PROJECT),
+                            string(name: 'branch', value: branch),
+                            string(name: 'qemu_image', value: qemu?.image ?: ''),
+                            string(name: 'qemu_pad', value: qemu?.pad?.toString() ?: ''),
+                            string(name: 'build', value: buildStr),
+                            string(name: 'qemu_build', value: qemuBuildStr)
+                        ],
+                        wait: true,
+                        propagate: false
+                    results[target] = run.result
+                    urls[target] = run.absoluteUrl
+                } catch (Exception e) {
+                    results[target] = 'NOT_LAUNCHED'
+                }
+                currentBuild.description = buildTargets.collect { t ->
+                    def r = results[t]
+                    def icon
+                    if (r == null) {
+                        icon = '&#9203;'
+                    } else if (r == 'SUCCESS') {
+                        icon = '&#10003;'
+                    } else {
+                        icon = '&#10007;'
+                    }
+                    urls[t] ? "${icon} <a href='${urls[t]}'>${t}</a>" : "${icon} ${t}"
+                }.join('<br/>')
+            }
+        }
+        parallel branches
+
+        def requiredFailures = results.findAll { target, result ->
+            def buildStr = config[branch][target]?.build ?: 'required'
+            result != 'SUCCESS' && buildStr == 'required'
+        }.collect { it.key }
+
+        def advisoryFailures = results.findAll { target, result ->
+            def buildStr = config[branch][target]?.build ?: 'required'
+            result != 'SUCCESS' && buildStr == 'advisory'
+        }.collect { it.key }
+
+        echo '=== Build Results ==='
+        results.each { target, result ->
+            echo "  ${target}: ${result}"
+        }
+
+        if (advisoryFailures) {
+            echo "Warning - advisory failures: ${advisoryFailures.join(', ')}"
+        }
+        if (requiredFailures) {
+            error "Failed targets: ${requiredFailures.join(', ')}"
+        }
+    }
+}

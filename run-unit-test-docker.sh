@@ -23,7 +23,6 @@
 #                         `/usr/share/dbus-1/system.conf`
 #   TEST_ONLY:       Optional, do not run analysis tools
 #   NO_FORMAT_CODE:  Optional, do not run format-code.sh
-#   NO_CPPCHECK:     Optional, do not run cppcheck
 #   EXTRA_DOCKER_RUN_ARGS:  Optional, pass arguments to docker run
 #   EXTRA_UNIT_TEST_ARGS:  Optional, pass arguments to unit-test.py
 #   INTERACTIVE: Optional, run a bash shell instead of unit-test.py
@@ -43,7 +42,6 @@ TEST_ONLY="${TEST_ONLY:-}"
 DBUS_SYS_CONFIG_FILE=${dbus_sys_config_file:-"/usr/share/dbus-1/system.conf"}
 MAKEFLAGS="${MAKEFLAGS:-""}"
 NO_FORMAT_CODE="${NO_FORMAT_CODE:-}"
-NO_CPPCHECK="${NO_CPPCHECK:-}"
 INTERACTIVE="${INTERACTIVE:-}"
 http_proxy=${http_proxy:-}
 
@@ -83,7 +81,7 @@ if [ "${INTERACTIVE}" ]; then
 else
     UNIT_TEST="${UNIT_TEST_SCRIPT_DIR}/${UNIT_TEST_PY},-w,${DOCKER_WORKDIR},\
 -p,${UNIT_TEST_PKG},-b,$BRANCH,\
--v${TEST_ONLY:+,-t}${NO_FORMAT_CODE:+,-n}${NO_CPPCHECK:+,--no-cppcheck}\
+-v${TEST_ONLY:+,-t}${NO_FORMAT_CODE:+,-n}\
 ${EXTRA_UNIT_TEST_ARGS}"
 fi
 
@@ -109,6 +107,7 @@ export PODMAN_USERNS="keep-id"
 # shellcheck disable=SC2086 # ${PROXY_ENV} and ${EXTRA_DOCKER_RUN_ARGS} are
 # meant to be split
 docker run --cap-add=sys_admin --rm=true \
+    --tmpfs /tmp:rw,exec,mode=1777 \
     --privileged=true \
     ${PROXY_ENV} \
     -u "$USER" \

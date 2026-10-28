@@ -1,0 +1,145 @@
+pipeline {
+    agent { label 'docker-builder' }
+
+    parameters {
+        string(name: 'target', defaultValue: '')
+        string(name: 'GERRIT_REFSPEC', defaultValue: 'refs/heads/master')
+        string(name: 'GERRIT_PROJECT', defaultValue: 'openbmc/openbmc')
+        string(name: 'branch', defaultValue: 'master')
+        string(name: 'qemu_image', defaultValue: '')
+        string(name: 'qemu_pad', defaultValue: '')
+        string(name: 'build', defaultValue: 'required')
+        string(name: 'qemu_build', defaultValue: 'disabled')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                deleteDir()
+                script {
+                    // Intermittent "early EOF" / "invalid index-pack output"
+                    // failures have been seen on cloud-hosted nodes, so retry
+                    // from a clean directory with a pause between attempts.
+                    retry(3) {
+                        try {
+                            dir('openbmc') {
+                                deleteDir()
+                                checkout([
+                                    $class: 'GitSCM',
+                                    userRemoteConfigs: [[
+                                        url: "https://gerrit.openbmc.org/${params.GERRIT_PROJECT}",
+                                        name: 'gerrit',
+                                        refspec: params.GERRIT_REFSPEC
+                                    ]],
+                                    branches: [[name: params.branch]],
+                                    extensions: [
+                                        [$class: 'BuildChooserSetting',
+                                         buildChooser: [$class: 'GerritTriggerBuildChooser']],
+                                        [$class: 'CleanBeforeCheckout'],
+                                        // Only the tip commit is needed (bitbake
+                                        // derives the os-release hash from HEAD).
+                                        [$class: 'CloneOption', shallow: true, noTags: true, depth: 1]
+                                    ]
+                                ])
+                            }
+                        } catch (Exception e) {
+                            sleep time: 30, unit: 'SECONDS'
+                            throw e
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                script {
+                    def tag = params.build == 'advisory' ? ' (advisory)' : ''
+                    currentBuild.description = "Target: ${params.target}${tag}"
+                }
+                script {
+                    try {
+                        sh '''#!/bin/sh -xe
+                        export LANG=en_US.UTF8
+                        echo "BUILDING TARGET: ${target}"
+                        cd "${WORKSPACE}" && rm -rf openbmc-build-scripts
+                        git clone https://github.com/openbmc/openbmc-build-scripts.git
+                        cd openbmc-build-scripts
+                        export obmc_dir="${WORKSPACE}/openbmc/"
+                        export build_dir="${WORKSPACE}/build"
+                        export num_cpu=$((`nproc` / 2))
+                        [ "$num_cpu" -gt 12 ] && num_cpu=12
+                        export SDKMACHINE=x86_64
+                        export img_tag=25.04
+                        ./build-setup.sh
+                        '''
+                    } catch (Exception e) {
+                        if (params.build == 'advisory') {
+                            currentBuild.result = 'UNSTABLE'
+                            echo "Build failed for advisory target ${params.target}: ${e.message}"
+                        } else {
+                            throw e
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('QEMU Test') {
+            when {
+                expression { params.qemu_image != '' }
+            }
+            steps {
+                script {
+                    try {
+                        sh '''#!/bin/sh -xe
+                        export UPSTREAM_WORKSPACE="${WORKSPACE}/openbmc/build"
+                        export MACHINE="${target}"
+                        export LAUNCH=local
+                        export QEMU_RUN_TIMER=900
+                        export QEMU_LOGIN_TIMER=600
+
+                        ARCH=$(uname -m)
+                        case ${ARCH} in
+                            "x86_64")   QEMU_LINK="x86" ;;
+                            "ppc64le")  QEMU_LINK="ppc64le" ;;
+                            "aarch64")  QEMU_LINK="aarch64" ;;
+                            *) echo "Unsupported architecture: ${ARCH}"; exit 1 ;;
+                        esac
+                        wget -O "${UPSTREAM_WORKSPACE}/qemu-system-arm" \
+                            "https://jenkins.openbmc.org/job/latest-qemu-${QEMU_LINK}/lastSuccessfulBuild/artifact/qemu/build/qemu-system-arm"
+                        chmod ugo+rwx "${UPSTREAM_WORKSPACE}/qemu-system-arm"
+                        export QEMU_BIN=./qemu-system-arm
+
+                        cd "${WORKSPACE}/openbmc-build-scripts"
+                        ./run-qemu-robot-test.sh
+                        '''
+                    } catch (Exception e) {
+                        if (params.qemu_build == 'advisory') {
+                            currentBuild.result = 'UNSTABLE'
+                            echo "QEMU test failed for advisory target ${params.target}: ${e.message}"
+                        } else {
+                            throw e
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'openbmc/build/tmp/deploy/images/**',
+                            allowEmptyArchive: true
+            script {
+                if (params.qemu_image != '') {
+                    archiveArtifacts artifacts: '*.xml,*.html,logs/**',
+                                    allowEmptyArchive: true
+                    robot outputPath: '.', logFileName: 'log.html',
+                          reportFileName: 'report.html', passThreshold: 100.0
+                }
+            }
+            cleanWs()
+        }
+    }
+}

@@ -23,21 +23,12 @@ fi
 # Ensure everything is built on same filesystem
 export build_dir="${WORKSPACE}/build"
 
-SEED_MACHINES=(
-    bletchley
-    catalina
-    e3c246d4i
-    evb-npcm845
-    gb200nvl-obmc
-    gbs
-    harma
-    minerva
-    p10bmc
-    romulus
-    ventura
-    witherspoon
-    yosemite4
-)
+mapfile -t SEED_MACHINES < <(python3 -c "
+import json, os, sys
+branch = os.environ.get('GERRIT_BRANCH', 'master')
+data = json.load(sys.stdin)
+[print(k) for k, v in data.get(branch, {}).items() if v.get('build') != 'disabled']
+" < "${WORKSPACE}/openbmc-build-scripts/jenkins/machines.json")
 
 for m in "${SEED_MACHINES[@]}"; do
     echo "Seeding $m"

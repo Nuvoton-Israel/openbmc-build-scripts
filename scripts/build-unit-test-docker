@@ -35,7 +35,7 @@ from hashlib import sha256
 # typing.Dict is used for type-hints.
 from typing import Any, Callable, Dict, Iterable, Optional  # noqa: F401
 
-from sh import git, nproc  # type: ignore
+from sh import git  # type: ignore
 
 try:
     # System may have docker or it may have podman, try docker first
@@ -64,7 +64,10 @@ except Exception:
 
 # Declare some variables used in package definitions.
 prefix = "/usr/local"
-proc_count = nproc().strip()
+try:
+    proc_count = len(os.sched_getaffinity(0))
+except AttributeError:
+    proc_count = os.cpu_count() or 1
 
 
 class PackageDef(TypedDict, total=False):
@@ -100,7 +103,7 @@ class PackageDef(TypedDict, total=False):
 # Packages to include in image.
 packages = {
     "boost": PackageDef(
-        rev="1.88.0",
+        rev="1.90.0",
         url=(
             lambda pkg, rev: f"https://github.com/boostorg/{pkg}/releases/download/{pkg}-{rev}/{pkg}-{rev}-cmake.tar.gz"
         ),
@@ -119,12 +122,8 @@ packages = {
         build_type="custom",
         build_steps=[f"cp -a include/cereal/ {prefix}/include/"],
     ),
-    "danmar/cppcheck": PackageDef(
-        rev="2.12.1",
-        build_type="cmake",
-    ),
     "DMTF/libspdm": PackageDef(
-        rev="3.7.0",
+        rev="3.8.2",
         url=lambda pkg, rev: f"https://github.com/DMTF/libspdm/archive/{rev}.tar.gz",
         build_type="cmake",
         config_flags=(
@@ -154,7 +153,7 @@ packages = {
         )(),
     ),
     "CLIUtils/CLI11": PackageDef(
-        rev="v2.3.2",
+        rev="v2.6.1",
         build_type="cmake",
         config_flags=[
             "-DBUILD_TESTING=OFF",
@@ -185,9 +184,9 @@ packages = {
         config_flags=["-DTHREADS_PREFER_PTHREAD_FLAG=ON"],
     ),
     "nghttp2/nghttp2": PackageDef(
-        rev="v1.65.0",
+        rev="v1.68.0",
         build_type="cmake",
-        config_env=["CXXFLAGS=-std=c++20"],
+        config_env=["CXXFLAGS=-std=c++23"],
         config_flags=[
             "-DENABLE_LIB_ONLY=ON",
             "-DENABLE_STATIC_LIB=ON",
@@ -199,18 +198,19 @@ packages = {
         config_flags=["-DJSON_BuildTests=OFF"],
         custom_post_install=[
             (
-                f"ln -s {prefix}/include/nlohmann/json.hpp"
-                f" {prefix}/include/json.hpp"
+                f"ln -s {prefix}/include/nlohmann/json.hpp {prefix}/include/json.hpp"
             ),
         ],
     ),
     "json-c/json-c": PackageDef(
         rev="json-c-0.18-20240915",
         build_type="cmake",
+        config_flags=["-DCMAKE_POLICY_VERSION_MINIMUM=3.5"],
     ),
     "LibVNC/libvncserver": PackageDef(
-        rev="LibVNCServer-0.9.14",
+        rev="LibVNCServer-0.9.15",
         build_type="cmake",
+        config_flags=["-DCMAKE_POLICY_VERSION_MINIMUM=3.5"],
     ),
     "leethomason/tinyxml2": PackageDef(
         rev="11.0.0",
@@ -231,6 +231,10 @@ packages = {
         ),
         build_type="autogen",
         config_flags=["--enable-bindings-cxx"],
+    ),
+    "NVIDIA/stdexec": PackageDef(
+        rev="8398d5a547b2ce1c5168336a9123cce8be9ab7f6",
+        build_type="meson",
     ),
     "open-power/pdbg": PackageDef(build_type="autoconf"),
     "openbmc/gpioplus": PackageDef(
@@ -272,6 +276,18 @@ packages = {
             "-Dtests=disabled",
         ],
     ),
+    "openbmc/libcper": PackageDef(
+        depends=[
+            "json-c/json-c",
+            "nlohmann/json",
+        ],
+        build_type="meson",
+        config_flags=[
+            "-Dfuzz=disabled",
+            "-Dpython=disabled",
+            "-Dtests=disabled",
+        ],
+    ),
     "openbmc/libpeci": PackageDef(
         build_type="meson",
         config_flags=[
@@ -288,6 +304,7 @@ packages = {
     ),
     "openbmc/sdbusplus": PackageDef(
         depends=[
+            "NVIDIA/stdexec",
             "nlohmann/json",
         ],
         build_type="meson",
@@ -453,7 +470,7 @@ FROM {docker_base_img_name}
 
     @classmethod
     def depcache(cls) -> str:
-        """Create the contents of the '/tmp/depcache'.
+        """Create the contents of '/var/lib/depcache'.
         This file is a comma-separated list of "<pkg>:<rev>".
         """
 
@@ -487,7 +504,7 @@ FROM {docker_base_img_name}
                 return False
             if len(commits) > 1:
                 print(
-                    f"{self.package} has more than 1 commit under {gerrit_topic}; using lastest upstream: {len(commits)}",
+                    f"{self.package} has more than 1 commit under {gerrit_topic}; using latest upstream: {len(commits)}",
                     file=sys.stderr,
                 )
                 return False
@@ -765,7 +782,7 @@ docker_image_name = os.environ.get(
 )
 force_build = os.environ.get("FORCE_DOCKER_BUILD")
 is_automated_ci_build = os.environ.get("BUILD_URL", False)
-distro = os.environ.get("DISTRO", "ubuntu:plucky")
+distro = os.environ.get("DISTRO", "ubuntu:resolute")
 branch = os.environ.get("BRANCH", "master")
 ubuntu_mirror = os.environ.get("UBUNTU_MIRROR")
 docker_reg = os.environ.get("DOCKER_REG", "public.ecr.aws/ubuntu")
@@ -793,9 +810,10 @@ if username == "root":
 
 # Special flags if setting up a deb mirror.
 mirror = ""
+skip_debug_repos = False
 if "ubuntu" in distro and ubuntu_mirror:
-    mirror = f"""
-RUN echo "deb {ubuntu_mirror} \
+    # Common apt sources configuration for all mirror types
+    mirror = f"""RUN echo "deb {ubuntu_mirror} \
         $(. /etc/os-release && echo $VERSION_CODENAME) \
         main restricted universe multiverse" > /etc/apt/sources.list && \\
     echo "deb {ubuntu_mirror} \
@@ -810,6 +828,20 @@ RUN echo "deb {ubuntu_mirror} \
     echo "deb {ubuntu_mirror} \
         $(. /etc/os-release && echo $VERSION_CODENAME)-backports \
             main restricted universe multiverse" >> /etc/apt/sources.list
+"""
+
+    # If using HTTPS mirror, we need to switch to it first, then install ca-certificates
+    # We configure apt to skip certificate verification initially, then install ca-certificates
+    if ubuntu_mirror.startswith("https://"):
+        # Skip debug repos when using HTTPS since ddebs.ubuntu.com only supports HTTP
+        skip_debug_repos = True
+        mirror = f"""{mirror}
+
+# Temporarily disable certificate verification to install ca-certificates
+RUN echo 'Acquire::https::Verify-Peer "false";' > /etc/apt/apt.conf.d/99temp-no-verify && \\
+    apt-get update && \\
+    apt-get install -y --no-install-recommends ca-certificates && \\
+    rm /etc/apt/apt.conf.d/99temp-no-verify
 """
 
 # Special flags for proxying.
@@ -837,44 +869,51 @@ EOF_WGETRC
         ]
     )
 
-# Create base Dockerfile.
-dockerfile_base = f"""
-FROM {docker_reg}/{distro}
-
-{mirror}
-
-ENV DEBIAN_FRONTEND noninteractive
-
-ENV PYTHONPATH "/usr/local/lib/python3.10/site-packages/"
-
-# Sometimes the ubuntu key expires and we need a way to force an execution
-# of the apt-get commands for the dbgsym-keyring.  When this happens we see
-# an error like: "Release: The following signatures were invalid:"
-# Insert a bogus echo that we can change here when we get this error to force
-# the update.
-RUN echo "ubuntu keyserver rev as of 2025-06-25"
-
+# Conditionally set up debug repos (skip if using HTTPS mirror since ddebs only supports HTTP)
+debug_repos = ""
+if not skip_debug_repos:
+    debug_repos = """
 # We need the keys to be imported for dbgsym repos
 # New releases have a package, older ones fall back to manual fetching
 # https://wiki.ubuntu.com/Debug%20Symbol%20Packages
 # Known issue with gpg to get keys via proxy -
 # https://bugs.launchpad.net/ubuntu/+source/gnupg2/+bug/1788190, hence using
 # curl to get keys.
-RUN apt-get update && apt-get dist-upgrade -yy && \
-    ( apt-get install -yy gpgv ubuntu-dbgsym-keyring || \
-        ( apt-get install -yy dirmngr curl && \
-          curl -sSL \
-          'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF2EDC64DC5AEE1F6B9C621F0C8CAB6595FDFF622' \
+RUN apt-get update && apt-get dist-upgrade -yy && \\
+    ( apt-get install -yy gpgv ubuntu-dbgsym-keyring || \\
+        ( apt-get install -yy dirmngr curl && \\
+          curl -sSL \\
+          'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF2EDC64DC5AEE1F6B9C621F0C8CAB6595FDFF622' \\
           | apt-key add - ))
 
 # Parse the current repo list into a debug repo list
-RUN sed -n '/^deb /s,^deb [^ ]* ,deb http://ddebs.ubuntu.com ,p' \
+RUN sed -n '/^deb /s,^deb [^ ]* ,deb http://ddebs.ubuntu.com ,p' \\
         /etc/apt/sources.list >/etc/apt/sources.list.d/debug.list
 
 # Remove non-existent debug repos
-RUN sed -i '/-\\(backports\\|security\\) /d' /etc/apt/sources.list.d/debug.list
+RUN sed -i '/-\\\\(backports\\\\|security\\\\) /d' /etc/apt/sources.list.d/debug.list
 
 RUN cat /etc/apt/sources.list.d/debug.list
+"""
+
+# Create base Dockerfile.
+dockerfile_base = f"""
+FROM {docker_reg}/{distro}
+
+{mirror}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+ENV PYTHONPATH="/usr/local/lib/python3.10/site-packages/"
+
+# Sometimes the ubuntu key expires and we need a way to force an execution
+# of the apt-get commands for the dbgsym-keyring.  When this happens we see
+# an error like: "Release: The following signatures were invalid:"
+# Insert a bogus echo that we can change here when we get this error to force
+# the update.
+RUN echo "ubuntu keyserver rev as of 2025-11-17"
+
+{debug_repos}
 
 RUN apt-get update && apt-get dist-upgrade -yy && apt-get install -yy \
     abi-compliance-checker \
@@ -888,8 +927,6 @@ RUN apt-get update && apt-get dist-upgrade -yy && apt-get install -yy \
     device-tree-compiler \
     doxygen \
     flex \
-    g++-15 \
-    gcc-15 \
     git \
     glib-2.0 \
     gnupg \
@@ -922,11 +959,11 @@ RUN apt-get update && apt-get dist-upgrade -yy && apt-get install -yy \
     libsystemd-dev \
     libtool \
     liburing-dev \
+    libxml2-dev \
     libxml2-utils \
     libxml-simple-perl \
     lsb-release \
     ninja-build \
-    npm \
     pkg-config \
     protobuf-compiler \
     python3 \
@@ -938,6 +975,8 @@ RUN apt-get update && apt-get dist-upgrade -yy && apt-get install -yy \
     python3-setuptools \
     python3-socks \
     python3-yaml \
+    qemu-user \
+    qemu-user-binfmt \
     rsync \
     shellcheck \
     socat \
@@ -950,34 +989,59 @@ RUN apt-get update && apt-get dist-upgrade -yy && apt-get install -yy \
     wget \
     xxd
 
-RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-15 15 \
-  --slave /usr/bin/g++ g++ /usr/bin/g++-15 \
-  --slave /usr/bin/gcov gcov /usr/bin/gcov-15 \
-  --slave /usr/bin/gcov-dump gcov-dump /usr/bin/gcov-dump-15 \
-  --slave /usr/bin/gcov-tool gcov-tool /usr/bin/gcov-tool-15
+# Add the ubuntu-toolchain-r repository for later versions of GCC and install.
+RUN add-apt-repository ppa:ubuntu-toolchain-r/ppa && \
+    apt-get update && \
+    apt-get install -y \
+        gcc-16 \
+        gcc-16-arm-linux-gnueabihf \
+        gcc-16-x86-64-linux-gnu \
+        g++-16 \
+        g++-16-arm-linux-gnueabihf \
+        g++-16-x86-64-linux-gnu \
+        libstdc++-16-dev
+
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-16 16 \
+  --slave /usr/bin/g++ g++ /usr/bin/g++-16 \
+  --slave /usr/bin/gcov gcov /usr/bin/gcov-16 \
+  --slave /usr/bin/gcov-dump gcov-dump /usr/bin/gcov-dump-16 \
+  --slave /usr/bin/gcov-tool gcov-tool /usr/bin/gcov-tool-16
 RUN update-alternatives --remove cpp /usr/bin/cpp && \
-    update-alternatives --install /usr/bin/cpp cpp /usr/bin/cpp-15 15
+    update-alternatives --install /usr/bin/cpp cpp /usr/bin/cpp-16 16
+RUN update-alternatives --install /usr/bin/x86_64-linux-gnu-gcc x86_64-linux-gnu-gcc /usr/bin/x86_64-linux-gnu-gcc-16 16 \
+  --slave /usr/bin/x86_64-linux-gnu-g++ x86_64-linux-gnu-g++ /usr/bin/x86_64-linux-gnu-g++-16 \
+  --slave /usr/bin/x86_64-linux-gnu-cpp x86_64-linux-gnu-cpp /usr/bin/x86_64-linux-gnu-cpp-16
+RUN update-alternatives --install /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc /usr/bin/arm-linux-gnueabihf-gcc-16 16 \
+  --slave /usr/bin/arm-linux-gnueabihf-g++ arm-linux-gnueabihf-g++ /usr/bin/arm-linux-gnueabihf-g++-16 \
+  --slave /usr/bin/arm-linux-gnueabihf-cpp arm-linux-gnueabihf-cpp /usr/bin/arm-linux-gnueabihf-cpp-16
 
 # Set up LLVM apt repository.
-RUN bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" -- 21 -m https://apt.llvm.org
+RUN bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" -- 23 -m https://apt.llvm.org
 
 # Install extra clang tools
 RUN apt-get install -y \
-        clang-21 \
-        clang-format-21 \
-        clang-tidy-21 \
-        lld-21
+        clang-23 \
+        clang-format-23 \
+        clang-tidy-23 \
+        lld-23
 
-RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 1000 \
-  --slave /usr/bin/clang++ clang++ /usr/bin/clang++-21 \
-  --slave /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-21 \
+RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-23 1000 \
+  --slave /usr/bin/clang++ clang++ /usr/bin/clang++-23 \
+  --slave /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-23 \
   --slave /usr/bin/clang-apply-replacements clang-apply-replacements \
-        /usr/bin/clang-apply-replacements-21 \
-  --slave /usr/bin/clang-format clang-format /usr/bin/clang-format-21 \
+        /usr/bin/clang-apply-replacements-23 \
+  --slave /usr/bin/clang-format clang-format /usr/bin/clang-format-23 \
   --slave /usr/bin/run-clang-tidy run-clang-tidy.py \
-        /usr/bin/run-clang-tidy-21 \
-  --slave /usr/bin/scan-build scan-build /usr/bin/scan-build-21 \
-  --slave /usr/bin/lld lld /usr/bin/lld-21
+        /usr/bin/run-clang-tidy-23 \
+  --slave /usr/bin/scan-build scan-build /usr/bin/scan-build-23 \
+  --slave /usr/bin/lld lld /usr/bin/lld-23
+
+# Install later versions of nodejs.
+RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource.gpg.key | \
+        gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+RUN echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" | \
+        tee /etc/apt/sources.list.d/nodesource.list
+RUN apt-get update && apt-get install -y nodejs
 
 """
 
@@ -991,23 +1055,31 @@ RUN apt-get update && apt-get dist-upgrade -yy
 """
 
 dockerfile_base += """
-RUN pip3 install --break-system-packages \
+# Use --ignore-installed cryptography to avoid conflicts with system-installed
+# cryptography package that lacks pip RECORD file and cannot be uninstalled.
+# Pin gcovr until the internal-function coverage fix is released:
+# https://github.com/gcovr/gcovr/pull/1320
+RUN pip3 install --break-system-packages --ignore-installed cryptography \
+        ast-grep-cli \
         beautysh \
         black \
         codespell \
         flake8 \
-        gcovr \
+        gcovr==8.6 \
         gitlint \
         inflection \
         isoduration \
         isort \
         jsonschema \
-        meson==1.9.0 \
+        meson==1.12.0 \
+        redfish_service_validator \
         referencing \
         requests
 
+ENV NODE_PATH="/usr/lib/node_modules"
 RUN npm install -g \
-        eslint@v8.56.0 eslint-plugin-json@v3.1.0 \
+        eslint@latest eslint-config@latest \
+        @eslint/json@latest \
         markdownlint-cli@latest \
         prettier@latest
 """
@@ -1026,7 +1098,8 @@ FROM {docker_base_img_name}
 # Some of our infrastructure still relies on the presence of this file
 # even though it is no longer needed to rebuild the docker environment
 # NOTE: The file is sorted to ensure the ordering is stable.
-RUN echo '{Package.depcache()}' > /tmp/depcache
+RUN echo '{Package.depcache()}' > /var/lib/depcache && \\
+    ln -sf /var/lib/depcache /tmp/depcache
 
 # Ensure the group, user, and home directory are created (or rename them if
 # they already exist).

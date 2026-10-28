@@ -13,14 +13,17 @@ import multiprocessing
 import os
 import platform
 import re
+import resource
 import shutil
 import subprocess
 import sys
+import tempfile
 from subprocess import CalledProcessError, check_call
 from tempfile import TemporaryDirectory
 from urllib.parse import urljoin
 
 from git import Repo
+from git.exc import GitCommandError
 
 # interpreter is not used directly but this resolves dependency ordering
 # that would be broken if we didn't include it.
@@ -257,7 +260,7 @@ def clone_pkg(pkg, branch):
         # first try the branch
         clone = Repo.clone_from(pkg_repo, pkg_dir, branch=branch)
         repo_inst = clone.working_dir
-    except Exception:
+    except GitCommandError:
         printline("Input branch not found, default to master")
         clone = Repo.clone_from(pkg_repo, pkg_dir, branch="master")
         repo_inst = clone.working_dir
@@ -332,8 +335,12 @@ def build_dep_tree(name, pkgdir, dep_added, head, branch, dep_tree=None):
     if not dep_tree:
         dep_tree = head
 
-    with open("/tmp/depcache", "r") as depcache:
-        cache = depcache.readline()
+    cache = ""
+    for path in ["/var/lib/depcache", "/tmp/depcache"]:
+        if os.path.exists(path):
+            with open(path, "r") as depcache:
+                cache = depcache.readline()
+            break
 
     # Read out pkg dependencies
     pkg = Package(name, pkgdir)
@@ -372,73 +379,48 @@ def build_dep_tree(name, pkgdir, dep_added, head, branch, dep_tree=None):
     return dep_added
 
 
-def run_cppcheck():
-    if (
-        not os.path.exists(os.path.join("build", "compile_commands.json"))
-        or NO_CPPCHECK
-    ):
-        return None
-
-    with TemporaryDirectory() as cpp_dir:
-        # http://cppcheck.sourceforge.net/manual.pdf
-        try:
-            check_call_cmd(
-                "cppcheck",
-                "-j",
-                str(multiprocessing.cpu_count()),
-                "--enable=style,performance,portability,missingInclude",
-                "--inline-suppr",
-                "--suppress=useStlAlgorithm",
-                "--suppress=unusedStructMember",
-                "--suppress=postfixOperator",
-                "--suppress=unreadVariable",
-                "--suppress=knownConditionTrueFalse",
-                "--library=googletest",
-                "--project=build/compile_commands.json",
-                f"--cppcheck-build-dir={cpp_dir}",
-            )
-        except subprocess.CalledProcessError:
-            print("cppcheck found errors")
+def valgrind_rlimit_nofile(soft=2048, hard=4096):
+    resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
 
 
 def is_valgrind_safe():
     """
     Returns whether it is safe to run valgrind on our platform
     """
-    src = "unit-test-vg.c"
-    exe = "./unit-test-vg"
-    with open(src, "w") as h:
-        h.write("#include <errno.h>\n")
-        h.write("#include <stdio.h>\n")
-        h.write("#include <stdlib.h>\n")
-        h.write("#include <string.h>\n")
-        h.write("int main() {\n")
-        h.write("char *heap_str = malloc(16);\n")
-        h.write('strcpy(heap_str, "RandString");\n')
-        h.write('int res = strcmp("RandString", heap_str);\n')
-        h.write("free(heap_str);\n")
-        h.write("char errstr[64];\n")
-        h.write("strerror_r(EINVAL, errstr, sizeof(errstr));\n")
-        h.write('printf("%s\\n", errstr);\n')
-        h.write("return res;\n")
-        h.write("}\n")
-    try:
-        with open(os.devnull, "w") as devnull:
-            check_call(
-                ["gcc", "-O2", "-o", exe, src], stdout=devnull, stderr=devnull
-            )
+    with tempfile.TemporaryDirectory() as temp:
+        src = os.path.join(temp, "unit-test-vg.c")
+        exe = os.path.join(temp, "unit-test-vg")
+        with open(src, "w") as h:
+            h.write("#include <errno.h>\n")
+            h.write("#include <stdio.h>\n")
+            h.write("#include <stdlib.h>\n")
+            h.write("#include <string.h>\n")
+            h.write("int main() {\n")
+            h.write("char *heap_str = malloc(16);\n")
+            h.write('strcpy(heap_str, "RandString");\n')
+            h.write('int res = strcmp("RandString", heap_str);\n')
+            h.write("free(heap_str);\n")
+            h.write("char errstr[64];\n")
+            h.write("strerror_r(EINVAL, errstr, sizeof(errstr));\n")
+            h.write('printf("%s\\n", errstr);\n')
+            h.write("return res;\n")
+            h.write("}\n")
+        check_call(
+            ["gcc", "-O2", "-o", exe, src],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
             check_call(
                 ["valgrind", "--error-exitcode=99", exe],
-                stdout=devnull,
-                stderr=devnull,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=valgrind_rlimit_nofile,
             )
+        except CalledProcessError:
+            sys.stderr.write("###### Platform is not valgrind safe ######\n")
+            return False
         return True
-    except Exception:
-        sys.stderr.write("###### Platform is not valgrind safe ######\n")
-        return False
-    finally:
-        os.remove(src)
-        os.remove(exe)
 
 
 def is_sanitize_safe():
@@ -466,7 +448,7 @@ def is_sanitize_safe():
             )
             check_call([exe], stdout=devnull, stderr=devnull)
 
-        # TODO - Sanitizer not working on ppc64le
+        # TODO: Sanitizer not working on ppc64le
         # https://github.com/openbmc/openbmc-build-scripts/issues/31
         if platform.processor() == "ppc64le":
             sys.stderr.write("###### ppc64le is not sanitize safe ######\n")
@@ -499,7 +481,7 @@ def maybe_make_valgrind():
 
     try:
         cmd = make_parallel + ["check-valgrind"]
-        check_call_cmd(*cmd)
+        check_call_cmd(*cmd, preexec_fn=valgrind_rlimit_nofile)
     except CalledProcessError:
         for root, _, files in os.walk(os.getcwd()):
             for f in files:
@@ -666,7 +648,7 @@ class Autotools(BuildSystem):
             stderr=subprocess.PIPE,
         )
         document = contents.encode("utf-8")
-        (stdout, stderr) = autoconf_process.communicate(input=document)
+        stdout, stderr = autoconf_process.communicate(input=document)
         if not stdout:
             print(stderr)
             raise Exception("Failed to run autoconf for parsing dependencies")
@@ -712,9 +694,6 @@ class Autotools(BuildSystem):
                 self._configure_feature("valgrind", build_for_testing),
             ]
         )
-        # Add any necessary configure flags for package
-        if CONFIGURE_FLAGS.get(self.package) is not None:
-            conf_flags.extend(CONFIGURE_FLAGS.get(self.package))
         for bootstrap in ["bootstrap.sh", "bootstrap", "autogen.sh"]:
             if os.path.exists(bootstrap):
                 check_call_cmd("./" + bootstrap)
@@ -744,7 +723,7 @@ class Autotools(BuildSystem):
             raise Exception("Unit tests failed")
 
     def analyze(self):
-        run_cppcheck()
+        pass
 
 
 class CMake(BuildSystem):
@@ -812,7 +791,6 @@ class CMake(BuildSystem):
 
         maybe_make_valgrind()
         maybe_make_coverage()
-        run_cppcheck()
 
 
 class Meson(BuildSystem):
@@ -858,7 +836,7 @@ class Meson(BuildSystem):
         options_file        The file containing options
         """
         store = OptionStore(is_cross=False)
-        oi = optinterpreter.OptionInterpreter(store, "")
+        oi = optinterpreter.OptionInterpreter(store, None)
         oi.process(options_file)
         return oi.options
 
@@ -1040,6 +1018,7 @@ class Meson(BuildSystem):
                     "--print-errorlogs",
                     "--setup",
                     "{}:valgrind".format(self.package),
+                    preexec_fn=valgrind_rlimit_nofile,
                 )
             else:
                 check_call_cmd(
@@ -1052,6 +1031,7 @@ class Meson(BuildSystem):
                     "--print-errorlogs",
                     "--wrapper",
                     "valgrind --error-exitcode=1",
+                    preexec_fn=valgrind_rlimit_nofile,
                 )
         except CalledProcessError:
             raise Exception("Valgrind tests failed")
@@ -1122,11 +1102,6 @@ class Meson(BuildSystem):
                 "--logbase",
                 "testlog-ubasan",
             )
-            # TODO: Fix memory sanitizer
-            # check_call_cmd('meson', 'configure', 'build',
-            #                '-Db_sanitize=memory')
-            # check_call_cmd('meson', 'test', '-C', 'build'
-            #                '--logbase', 'testlog-msan')
             meson_flags = [
                 s.replace(
                     "-Db_sanitize=address,undefined", "-Db_sanitize=none"
@@ -1152,7 +1127,6 @@ class Meson(BuildSystem):
                 check_call_cmd("ninja", "-C", "build", "coverage-html")
                 break
         check_call_cmd("meson", "configure", "build", "-Db_coverage=false")
-        run_cppcheck()
 
     def _extra_meson_checks(self):
         with open(os.path.join(self.path, "meson.build"), "rt") as f:
@@ -1281,14 +1255,6 @@ def find_file(filename, basedir):
 
 
 if __name__ == "__main__":
-    # CONFIGURE_FLAGS = [GIT REPO]:[CONFIGURE FLAGS]
-    CONFIGURE_FLAGS = {
-        "phosphor-logging": [
-            "--enable-metadata-processing",
-            "--enable-openpower-pel-extension",
-            "YAML_DIR=/usr/local/share/phosphor-dbus-yaml/yaml",
-        ]
-    }
 
     # MESON_FLAGS = [GIT REPO]:[MESON FLAGS]
     MESON_FLAGS = {
@@ -1296,7 +1262,10 @@ if __name__ == "__main__":
             "-Ddata_com_ibm=true",
             "-Ddata_org_open_power=true",
         ],
-        "phosphor-logging": ["-Dopenpower-pel-extension=enabled"],
+        "phosphor-logging": [
+            "-Dopenpower-pel-extension=enabled",
+            "-Damd-event-log=enabled",
+        ],
     }
 
     # DEPENDENCIES = [MACRO]:[library/header]:[GIT REPO]
@@ -1365,14 +1334,6 @@ if __name__ == "__main__":
         default=False,
         help="Only run test cases, no other validation",
     )
-    parser.add_argument(
-        "--no-cppcheck",
-        dest="NO_CPPCHECK",
-        action="store_true",
-        required=False,
-        default=False,
-        help="Do not run cppcheck",
-    )
     arg_inttests = parser.add_mutually_exclusive_group()
     arg_inttests.add_argument(
         "--integration-tests",
@@ -1418,7 +1379,6 @@ if __name__ == "__main__":
     WORKSPACE = args.WORKSPACE
     UNIT_TEST_PKG = args.PACKAGE
     TEST_ONLY = args.TEST_ONLY
-    NO_CPPCHECK = args.NO_CPPCHECK
     INTEGRATION_TEST = args.INTEGRATION_TEST
     BRANCH = args.BRANCH
     FORMAT_CODE = args.FORMAT

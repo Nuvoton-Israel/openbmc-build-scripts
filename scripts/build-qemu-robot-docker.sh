@@ -21,7 +21,7 @@ set -uo pipefail
 http_proxy=${http_proxy:-}
 
 DOCKER_IMG_NAME=${1:-"openbmc/ubuntu-robot-qemu"}
-DISTRO=${2:-"ubuntu:plucky"}
+DISTRO=${2:-"ubuntu:resolute"}
 UBUNTU_MIRROR=${UBUNTU_MIRROR:-""}
 PIP_MIRROR=${PIP_MIRROR:-""}
 docker_reg=${DOCKER_REG:-"public.ecr.aws/ubuntu"}
@@ -33,6 +33,18 @@ if [[ -n "${UBUNTU_MIRROR}" ]]; then
         echo \"deb ${UBUNTU_MIRROR} \$(. /etc/os-release && echo \$VERSION_CODENAME)-security main restricted universe multiverse\" >> /etc/apt/sources.list && \
         echo \"deb ${UBUNTU_MIRROR} \$(. /etc/os-release && echo \$VERSION_CODENAME)-proposed main restricted universe multiverse\" >> /etc/apt/sources.list && \
         echo \"deb ${UBUNTU_MIRROR} \$(. /etc/os-release && echo \$VERSION_CODENAME)-backports main restricted universe multiverse\" >> /etc/apt/sources.list"
+
+    # If the mirror uses HTTPS, the minimal base image has no ca-certificates,
+    # so TLS verification will fail.  Temporarily disable peer verification just
+    # long enough to install ca-certificates, then remove the override so all
+    # subsequent apt operations run with full certificate checking.
+    if [[ "${UBUNTU_MIRROR}" == https://* ]]; then
+        MIRROR="${MIRROR}
+RUN echo 'Acquire::https::Verify-Peer \"false\";' > /etc/apt/apt.conf.d/99temp-no-verify && \\
+    apt-get update && \\
+    apt-get install -y --no-install-recommends ca-certificates && \\
+    rm /etc/apt/apt.conf.d/99temp-no-verify"
+    fi
 fi
 
 PIP_MIRROR_CMD=""
@@ -85,7 +97,7 @@ RUN apt-get update && apt-get install -yy \
     sshpass \
     liboss4-salsa-asound2 \
     libfdt1 \
-    libpcre3 \
+    libpcre2-dev \
     libslirp-dev \
     openssl \
     libxml2-dev \
@@ -107,7 +119,7 @@ ENV HOME=${HOME}
 
 ${PIP_MIRROR_CMD}
 
-RUN pip3 install --break-system-packages \
+RUN pip3 install --break-system-packages --ignore-installed cryptography \
     tox \
     requests \
     retrying \
@@ -124,6 +136,7 @@ RUN pip3 install --break-system-packages \
     lxml \
     jsonschema \
     redfishtool \
+    redfish_service_validator \
     redfish_utilities \
     robotframework-httplibrary \
     robotframework-seleniumlibrary==6.0.0 \
