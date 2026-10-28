@@ -306,7 +306,8 @@ elif [[ "${distro}" == ubuntu ]]; then
       texinfo \
       vim \
       wget \
-      zstd
+      zstd \
+      rpcsvc-proto
 
   # Set the locale
   RUN locale-gen en_US.UTF-8
