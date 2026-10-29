@@ -307,7 +307,7 @@ elif [[ "${distro}" == ubuntu ]]; then
       vim \
       wget \
       zstd \
-      rpcsvc-proto
+      rpcsvc-proto libcrypt-dev libxcrypt-source
 
   # Set the locale
   RUN locale-gen en_US.UTF-8
